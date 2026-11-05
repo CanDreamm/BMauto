@@ -1,4 +1,5 @@
 import json
+import re
 import secrets
 import time
 from urllib.parse import urlsplit
@@ -34,6 +35,30 @@ class VK:
             if buttons is not None and i == len(chunks) - 1:
                 args["keyboard"] = json.dumps(keyboard(buttons), ensure_ascii=False)
             self.call("messages.send", **args)
+
+    def resolve_user(self, value):
+        value = value.strip()
+        if value.startswith(("https://", "http://")):
+            parsed = urlsplit(value)
+            if parsed.hostname not in {"vk.com", "www.vk.com", "m.vk.com", "vk.ru", "www.vk.ru", "m.vk.ru"} or parsed.scheme != "https":
+                raise ValueError("Отправьте ID ВК или HTTPS-ссылку на профиль vk.com")
+            value = parsed.path.strip("/")
+        value = value.removeprefix("@")
+        numeric = re.fullmatch(r"(?:id)?([0-9]+)", value)
+        if numeric:
+            number = int(numeric.group(1))
+            if 0 < number < 2**63:
+                return number
+            raise ValueError("ID пользователя должен быть положительным числом")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,63}", value):
+            raise ValueError("Отправьте числовой ID ВК или ссылку на профиль пользователя")
+        try:
+            users = self.call("users.get", user_ids=value)
+        except ValueError as exc:
+            raise ValueError("Не удалось определить профиль ВК. Отправьте числовой ID пользователя") from exc
+        if not users or users[0].get("deactivated") or not isinstance(users[0].get("id"), int) or users[0]["id"] <= 0:
+            raise ValueError("Профиль пользователя ВК не найден")
+        return users[0]["id"]
 
     def download_photo(self, url):
         host = urlsplit(url).hostname or ""

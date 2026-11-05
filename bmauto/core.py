@@ -57,6 +57,8 @@ class Store:
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS project_members (project_id TEXT NOT NULL, user_id INTEGER NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner', 'member')), PRIMARY KEY (project_id, user_id))")
+        self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS project_owner ON project_members(project_id) WHERE role='owner'")
         self.db.commit()
 
     @staticmethod
@@ -73,6 +75,7 @@ class Store:
             for key, project in self.projects().items():
                 if self.is_demo(project):
                     self.db.execute("DELETE FROM projects WHERE id=?", (key,))
+                    self.db.execute("DELETE FROM project_members WHERE project_id=?", (key,))
 
     def seed_projects(self, projects):
         # Legacy config is an initial import only; never overwrite bot edits.
@@ -86,7 +89,7 @@ class Store:
     def projects(self):
         return {key: json.loads(body) for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")}
 
-    def save_project(self, project, expected_revision=None):
+    def save_project(self, project, expected_revision=None, owner=None):
         with self.db:
             row = self.db.execute("SELECT body FROM projects WHERE id=?", (project["id"],)).fetchone()
             current_revision = json.loads(row[0]).get("revision", 1) if row else None
@@ -94,7 +97,54 @@ class Store:
                 raise ValueError("Настройки проекта изменились. Откройте настройки заново")
             updated = {**project, "revision": (current_revision or 0) + 1}
             self.db.execute("INSERT OR REPLACE INTO projects VALUES (?,?)", (project["id"], json.dumps(updated)))
+            if current_revision is None and owner is not None:
+                self.db.execute("INSERT INTO project_members VALUES (?,?,'owner')", (project["id"], owner))
         return updated
+
+    def ensure_owners(self, default_owner):
+        if default_owner is None:
+            return
+        with self.db:
+            for key in self.projects():
+                row = self.db.execute("SELECT 1 FROM project_members WHERE project_id=? AND role='owner'", (key,)).fetchone()
+                if not row:
+                    self.db.execute("INSERT INTO project_members VALUES (?,?,'owner') ON CONFLICT(project_id,user_id) DO UPDATE SET role='owner'", (key, default_owner))
+
+    def members(self, project_id):
+        return dict(self.db.execute("SELECT user_id,role FROM project_members WHERE project_id=? ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END,user_id", (project_id,)))
+
+    def can_access(self, project_id, user, admins):
+        return project_id in self.projects() and (user in admins or user in self.members(project_id))
+
+    def can_manage(self, project_id, user, admins):
+        return project_id in self.projects() and (user in admins or self.members(project_id).get(user) == 'owner')
+
+    def visible_projects(self, user, admins):
+        return {key: p for key, p in self.projects().items() if self.can_access(key, user, admins)}
+
+    def can_enter(self, user, admins):
+        return user in admins or self.db.execute("SELECT 1 FROM project_members WHERE user_id=? LIMIT 1", (user,)).fetchone() is not None
+
+    def add_member(self, project_id, actor, user, admins):
+        if not self.can_manage(project_id, actor, admins):
+            raise ValueError("Управлять участниками может только владелец проекта или администратор")
+        if type(user) is not int or not 0 < user < 2**63:
+            raise ValueError("Неверный числовой ID пользователя ВК")
+        if user in admins or user in self.members(project_id):
+            raise ValueError("У этого пользователя уже есть доступ к проекту")
+        with self.db:
+            self.db.execute("INSERT INTO project_members VALUES (?,?,'member')", (project_id, user))
+
+    def remove_member(self, project_id, actor, user, admins):
+        if not self.can_manage(project_id, actor, admins):
+            raise ValueError("Управлять участниками может только владелец проекта или администратор")
+        if self.members(project_id).get(user) == 'owner' or user in admins:
+            raise ValueError("Нельзя удалить владельца или администратора")
+        with self.db:
+            self.db.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?", (project_id, user))
+            session = self.session(user)
+            if session.get("project") == project_id:
+                self.db.execute("INSERT OR REPLACE INTO sessions VALUES (?,?)", (user, json.dumps({"last_message": session.get("last_message", -1), "view": "projects"})))
 
     def session(self, user):
         row = self.db.execute("SELECT body FROM sessions WHERE user=?", (user,)).fetchone()

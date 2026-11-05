@@ -191,7 +191,7 @@ def test_create_only_name_then_independent_fields(tmp_path):
     bot = bot_at(tmp_path)
     chat = Conversation(bot)
     project = create_project(chat)
-    assert actions(bot) == {"project_edit", "settings", "projects"}
+    assert actions(bot) == {"project_edit", "settings", "members", "projects"}
     assert "dates" not in actions(bot)
     chat.send("project_edit", field="concept")
     assert actions(bot) == {"settings", "project_home"}
@@ -214,7 +214,7 @@ def test_return_from_edit_does_not_save_input(tmp_path, project):
     assert bot.store.session(1)["view"] == "home"
     chat.send(text="Это уже не концепция")
     assert bot.store.projects()["test"]["concept"] == "Concept"
-    assert actions(bot) == {"dates", "project_edit", "settings", "projects"}
+    assert actions(bot) == {"dates", "project_edit", "settings", "members", "projects"}
 
 
 def test_return_to_settings_keeps_page(tmp_path, project):

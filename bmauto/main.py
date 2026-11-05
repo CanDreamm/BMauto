@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from .core import Store, tasks_from_rows
 from .google import Google, publish
 from .llm import GenAPI
+from .members import MemberMenus
 from .projects import ProjectMenus
 from .vk import VK
 
@@ -20,7 +21,9 @@ class Bot:
         store.seed_projects([{**p, "timezone": p.get("timezone", config.get("timezone", "Europe/Moscow"))}
                              for p in config.get("projects", [])])
         store.remove_demo()
-        self.project_menus = ProjectMenus(store, vk)
+        store.ensure_owners(min(allowed) if allowed else None)
+        self.project_menus = ProjectMenus(store, vk, allowed)
+        self.member_menus = MemberMenus(store, vk, allowed)
         self.zone = ZoneInfo(config.get("timezone", "Europe/Moscow"))
         self.store, self.vk, self.google, self.llm, self.allowed = store, vk, google, llm, allowed
 
@@ -57,6 +60,29 @@ class Bot:
         if notice:
             self.vk.send(user, notice)
         project = self.store.projects().get(session.get("project"))
+        if project and not self.store.can_access(project["id"], user, self.allowed):
+            session = {"last_message": session.get("last_message", -1), "view": "projects"}
+            self.store.save_session(user, session)
+            project = None
+        wizard = session.get("wizard")
+        if wizard and ((wizard["kind"] == "create" and user not in self.allowed) or (wizard["kind"] != "create" and not self.store.can_manage(wizard["project"], user, self.allowed))):
+            session.pop("wizard", None)
+            session["view"] = "home" if project else "projects"
+            self.store.save_session(user, session)
+        if session.get("view") in {"members", "member_add", "member_remove"} and project:
+            if self.store.can_manage(project["id"], user, self.allowed):
+                if session.get("member_input"):
+                    self.member_menus.ask(user)
+                else:
+                    self.member_menus.show(user, project, session.get("members_page", 0))
+            else:
+                self.project_menus.show_home(user, project)
+            return
+        if project and not self.store.can_manage(project["id"], user, self.allowed) and ("wizard" in session or session.get("view") in {"settings", "edit", "create"}):
+            session.pop("wizard", None)
+            self.store.save_session(user, session)
+            self.project_menus.show_home(user, project)
+            return
         if project and session.get("view") in {"task", "supplement", "photos", "dates"} and session.get("project_revision") != project.get("revision", 1):
             for key in ("tasks", "task", "mode"):
                 session.pop(key, None)
@@ -78,8 +104,12 @@ class Bot:
 
     def handle(self, message):
         user, peer = message["from_id"], message["peer_id"]
-        if user not in self.allowed or peer != user:
-            return  # Private conversations with explicitly allowed users only.
+        if peer != user or user <= 0:
+            return
+        if not self.store.can_enter(user, self.allowed):
+            if self.store.session(user):
+                self.vk.send(user, "У вас нет доступных проектов. Обратитесь к владельцу", [])
+            return
         session = self.store.session(user)
         if message["id"] <= session.get("last_message", -1):
             return
@@ -100,9 +130,18 @@ class Bot:
             action = "projects"
         elif text.lower() in ("меню", "/menu", "меню проекта"):
             action = "project_home" if session.get("project") else "projects"
+        if action not in {"projects", "project_page", "project", "project_new"} and session.get("project") and not self.store.can_access(session["project"], user, self.allowed):
+            session = {"last_message": session.get("last_message", -1), "view": "projects"}
+            self.store.save_session(user, session)
+            raise ValueError("Нет доступа к проекту")
+        if action in {"projects", "project_page", "project", "project_new", "project_home", "project_cancel", "settings", "project_edit", "dates"}:
+            session.pop("member_input", None)
+            session.pop("member_remove", None)
+        if self.member_menus.handle(user, action, payload, text, session):
+            return
         if self.project_menus.handle(user, action, payload, text, session):
             return
-        projects = self.store.projects()
+        projects = self.store.visible_projects(user, self.allowed)
         if action == "project":
             if payload.get("p") not in projects:
                 raise ValueError("Проект не найден. Откройте список проектов")
