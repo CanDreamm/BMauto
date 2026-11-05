@@ -156,7 +156,7 @@ def test_bot_oauth_button_is_only_in_settings_and_uses_vk_link(connection):
     buttons = keyboard(vk.messages[-1][1])["buttons"]
     assert all(b["action"]["label"] != "Подключить Google" for row in buttons for b in row)
     chat.send("settings")
-    assert any(label == "Подключить Google" for label, _ in vk.messages[-1][1])
+    assert vk.messages[-1][1][0] == ("Подключить Google", {"a": "google_connect"})
     chat.send("google_connect")
     sent = keyboard(vk.messages[-1][1])["buttons"]
     assert sent[0][0]["action"]["type"] == "open_link"

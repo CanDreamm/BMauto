@@ -105,14 +105,14 @@ class ProjectMenus:
             details.append(f"{label}: {value if value is not None else 'Не задано'}")
         buttons = []
         if self.store.can_manage(project["id"], user, self.admins):
-            buttons = [(label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS[page * 6:(page + 1) * 6]]
+            connected = self.connections is not None and self.connections.connected(project)
+            buttons = [("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"})]
+            buttons.extend((label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS[page * 6:(page + 1) * 6])
             if page:
                 buttons.append(("Предыдущие поля", {"a": "settings", "page": page - 1}))
             if (page + 1) * 6 < len(FIELDS):
                 buttons.append(("Следующие поля", {"a": "settings", "page": page + 1}))
             buttons.append(("Участники", {"a": "members"}))
-            connected = self.connections is not None and self.connections.connected(project)
-            buttons.append(("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"}))
         else:
             details.append("Настройки доступны для просмотра. Изменения вносит владелец проекта")
         buttons.append(("К датам проекта", {"a": "project_home"}))
