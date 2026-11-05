@@ -13,7 +13,7 @@ class MemberMenus:
             lines.append(f"https://vk.com/id{member} — {'владелец' if role == 'owner' else 'участник'}")
             if role != "owner" and member not in self.admins:
                 buttons.append((f"Удалить id{member}", {"a": "member_remove", "user": member}))
-        lines.append("Администраторы бота сохраняют доступ ко всем проектам. Участники могут работать с заданиями и общими черновиками; настройки меняет владелец.")
+        lines.append("Администраторы бота сохраняют доступ ко всем проектам. Участники могут подключать Google проекта и работать с заданиями и общими черновиками; остальные настройки меняет владелец.")
         if page:
             buttons.append(("Назад", {"a": "members", "page": page - 1}))
         if (page + 1) * 6 < len(members):
@@ -68,6 +68,6 @@ class MemberMenus:
         else:
             target = self.vk.resolve_user(text)
             self.store.add_member(project["id"], user, target, self.admins)
-            self.vk.send(user, f"Доступ к проекту предоставлен: https://vk.com/id{target}. Попросите участника написать сообществу «Начать»")
+            self.vk.send(user, f"Доступ к проекту предоставлен: https://vk.com/id{target}. Попросите участника написать сообществу «Начать», выбрать проект → «Настройки» → «Подключить Google»")
             self.show(user, project, session.get("members_page", 0))
         return True

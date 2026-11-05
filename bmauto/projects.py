@@ -117,20 +117,19 @@ class ProjectMenus:
             if key == "public_read":
                 value = "Всем по ссылке" if value else "Только существующие права"
             details.append(f"{label}: {value if value is not None else 'Не задано'}")
-        buttons = []
+        connected = self.connections is not None and self.connections.connected(project)
+        buttons = [("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"})]
         if self.store.can_manage(project["id"], user, self.admins):
-            connected = self.connections is not None and self.connections.connected(project)
-            buttons = [("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"})]
             buttons.append([("Назад", {"a": "project_home"}),
                             ("Удалить проект", {"a": "project_delete", "_color": "negative"})])
+            buttons.append(("Участники", {"a": "members"}))
             buttons.extend((label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS[page * 6:(page + 1) * 6])
             if page:
                 buttons.append(("Предыдущие поля", {"a": "settings", "page": page - 1}))
             if (page + 1) * 6 < len(FIELDS):
                 buttons.append(("Следующие поля", {"a": "settings", "page": page + 1}))
-            buttons.append(("Участники", {"a": "members"}))
         else:
-            details.append("Настройки доступны для просмотра. Изменения вносит владелец проекта")
+            details.append("Вы можете подключить свой Google для этого проекта. Остальные настройки меняет владелец проекта")
             buttons.append(("Назад", {"a": "project_home"}))
         message = (f"Настройки проекта «{project['name']}»\nВыберите параметр"
                    if self.store.can_manage(project["id"], user, self.admins) else "\n\n".join(details))

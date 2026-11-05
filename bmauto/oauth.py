@@ -69,8 +69,8 @@ class GoogleConnections:
                                        code_verifier=verifier, autogenerate_code_verifier=verifier is None)
 
     def begin(self, project_id, actor):
-        if not self.store.can_manage(project_id, actor, self.admins):
-            raise ValueError("Подключать Google может только владелец проекта или администратор")
+        if not self.store.can_access(project_id, actor, self.admins):
+            raise ValueError("Подключать Google могут только участники этого проекта")
         state = secrets.token_urlsafe(32)
         flow = self.flow(state=state)
         url, _ = flow.authorization_url(access_type="offline", prompt="consent select_account")
@@ -91,7 +91,7 @@ class GoogleConnections:
         if not row or row[2] < time.time():
             raise ValueError("Ссылка истекла или уже использована. Нажмите «Подключить Google» в боте заново")
         project_id, actor, _, verifier = row
-        if not self.store.can_manage(project_id, actor, self.admins):
+        if not self.store.can_access(project_id, actor, self.admins):
             raise ValueError("У инициатора больше нет прав на подключение этого проекта")
         if error or not code:
             raise ValueError("Подключение отменено. Вернитесь в бот, чтобы попробовать снова")
@@ -109,10 +109,11 @@ class GoogleConnections:
             latest = self.db.execute("SELECT state_hash FROM latest WHERE project=?", (project_id,)).fetchone()
             if not latest or latest[0] != state_hash:
                 raise ValueError("Было запрошено более новое подключение. Используйте последнюю ссылку из бота")
-            if not self.store.can_manage(project_id, actor, self.admins):
+            if not self.store.can_access(project_id, actor, self.admins):
                 raise ValueError("Доступ к проекту изменился. Подключение отменено")
             project = self.store.projects()[project_id]
-            updated = self.store.save_project({**project, "google_connection_id": connection, "draft_scope": uuid.uuid4().hex}, project.get("revision", 1))
+            updated = self.store.save_project({**project, "google_connection_id": connection, "google_connected_by": actor,
+                                               "draft_scope": uuid.uuid4().hex}, project.get("revision", 1))
             bound = True
             self.db.execute("DELETE FROM latest WHERE project=?", (project_id,))
             self.db.commit()
@@ -143,8 +144,8 @@ class GoogleMenus:
     def handle(self, user, action, session):
         if action != "google_connect":
             return False
-        if not self.store.can_manage(session.get("project"), user, self.admins):
-            raise ValueError("Подключать Google может только владелец проекта или администратор")
+        if not self.store.can_access(session.get("project"), user, self.admins):
+            raise ValueError("Подключать Google могут только участники этого проекта")
         if self.connections is None:
             raise ValueError("Google OAuth ещё не настроен на сервере")
         url = self.connections.begin(session["project"], user)
@@ -152,6 +153,6 @@ class GoogleMenus:
         session["mode"], session["view"] = None, "google_connect"
         self.store.save_session(user, session)
         project = self.store.projects()[session["project"]]
-        self.vk.send(user, f"Подключение Google для проекта «{project['name']}». Войдите в нужный аккаунт и разрешите доступ к Диску и Таблицам. Ссылка действует 10 минут; не пересылайте её. После подключения вернитесь к датам проекта.",
+        self.vk.send(user, f"Подключение Google для проекта «{project['name']}». Войдите в свой аккаунт и разрешите доступ к Диску и Таблицам. Этот аккаунт будет использоваться всеми участниками проекта и заменит прежнее подключение. Ссылка действует 10 минут; не пересылайте её. После подключения вернитесь к датам проекта.",
                      [("Войти в Google", {"open_link": url}), ("К настройкам", {"a": "settings"}), ("К датам проекта", {"a": "project_home"})])
         return True

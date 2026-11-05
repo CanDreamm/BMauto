@@ -223,12 +223,12 @@ def test_member_can_read_settings_but_cannot_edit(tmp_path, project):
     member = Conversation(bot, 3)
     member.send("project", p="test")
     member.send("settings")
-    assert actions(bot) == {"project_home"}
+    assert actions(bot) == {"google_connect", "project_home"}
     assert "Concept" in bot.vk.messages[-1][0]
     member.send("project_edit", field="concept")
     member.send(text="Подмена концепции")
     assert bot.store.projects()["test"]["concept"] == "Concept"
-    assert actions(bot) == {"project_home"}
+    assert actions(bot) == {"google_connect", "project_home"}
 
 
 @pytest.mark.parametrize("value,expected", [("123", 123), ("id123", 123),

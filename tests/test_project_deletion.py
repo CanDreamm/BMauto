@@ -138,7 +138,7 @@ def test_members_cannot_delete_even_with_forged_confirmation(tmp_path, project):
     member = Conversation(bot, 3)
     member.send("project", p="test")
     member.send("settings")
-    assert actions(bot) == {"project_home"}
+    assert actions(bot) == {"google_connect", "project_home"}
     member.send("project_delete")
     assert "delete_confirmation" not in bot.store.session(3)
     session = bot.store.session(3)

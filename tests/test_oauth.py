@@ -115,10 +115,12 @@ def test_expiry_and_google_cancellation_do_not_change_project(connection):
     assert not connection.store.projects()["test"].get("google_connection_id")
 
 
-def test_member_cannot_connect_google_and_revocation_is_checked_on_callback(connection, monkeypatch):
+def test_member_can_connect_google_and_revocation_is_checked_on_callback(connection, monkeypatch):
     connection.store.add_member("test", 1, 3, {1})
-    with pytest.raises(ValueError, match="владелец"):
-        connection.begin("test", 3)
+    member_state = state_of(connection.begin("test", 3))
+    connection.store.remove_member("test", 1, 3, {1})
+    with pytest.raises(ValueError, match="больше нет прав"):
+        connection.finish(member_state, "unused-code")
     connection.store.db.execute("UPDATE project_members SET user_id=4 WHERE project_id='test' AND role='owner'")
     connection.store.db.commit()
     state = state_of(connection.begin("test", 4))
@@ -236,3 +238,53 @@ def test_callback_configuration_requires_fixed_https_path(connection, uri):
     connection.redirect_uri = uri
     with pytest.raises(ValueError, match="GOOGLE_OAUTH_REDIRECT_URI"):
         connection.begin("test", 1)
+
+
+def test_assigned_member_connects_own_google_from_vk_settings(connection, monkeypatch):
+    from bmauto.vk import VK
+    vk = FakeVK()
+    vk.resolve_user = lambda value: VK.resolve_user(vk, value)
+    bot = Bot({}, connection.store, vk, FakeGoogle(), FakeLLM(), {1}, connection)
+    owner = Conversation(bot, 1)
+    owner.send("project", p="test")
+    owner.send("settings")
+    assert vk.messages[-1][1][2] == ("Участники", {"a": "members"})
+    owner.send("member_add")
+    owner.send(text="3")
+    member = Conversation(bot, 3)
+    member.send(text="Начать")
+    assert vk.messages[-1][1] == [("Test", {"a": "project", "p": "test"})]
+    member.send("project", p="test")
+    member.send("settings")
+    assert vk.messages[-1][1] == [("Подключить Google", {"a": "google_connect"}), ("Назад", {"a": "project_home"})]
+    member.send("google_connect")
+    url = vk.messages[-1][1][0][1]["open_link"]
+    assert "всеми участниками проекта" in vk.messages[-1][0]
+    token_flow(monkeypatch, connection, refresh="member-account")
+    connection.finish(state_of(url), "member-code")
+    updated = connection.store.projects()["test"]
+    assert updated["google_connected_by"] == 3
+    assert json.loads(connection.path_for(updated).read_text())["refresh_token"] == "member-account"
+    assert not connection.store.projects()["other"].get("google_connection_id")
+    member.send("settings")
+    assert vk.messages[-1][1][0][0] == "Сменить Google-аккаунт"
+
+
+def test_project_member_cannot_connect_google_to_another_project(connection):
+    connection.store.add_member("test", 1, 3, {1})
+    with pytest.raises(ValueError, match="участники"):
+        connection.begin("other", 3)
+    with pytest.raises(ValueError, match="участники"):
+        connection.begin("test", 99)
+
+
+def test_removed_member_cannot_bind_google_even_if_token_exchange_started(connection, monkeypatch):
+    connection.store.add_member("test", 1, 3, {1})
+    state = state_of(connection.begin("test", 3))
+    token_flow(monkeypatch, connection)
+    flow = connection.flow()
+    flow.fetch_token = lambda **kwargs: connection.store.remove_member("test", 1, 3, {1})
+    with pytest.raises(ValueError, match="Доступ к проекту изменился"):
+        connection.finish(state, "member-code")
+    assert not connection.store.projects()["test"].get("google_connection_id")
+    assert not list(connection.root.glob("*.json"))
