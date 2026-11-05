@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bmauto"
+version = "0.1.0"
+description = "VK publication drafts with Google Sheets and Drive"
+requires-python = ">=3.12"
+dependencies = ["httpx>=0.28,<1", "google-auth[requests]>=2.38,<3", "google-auth-oauthlib>=1.2,<2", "python-docx>=1.1,<2", "python-dotenv>=1,<2"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+bmauto = "bmauto.main:main"
+
+[tool.setuptools.packages.find]
+include = ["bmauto*"]
