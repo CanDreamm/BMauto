@@ -202,6 +202,8 @@ def test_create_only_name_then_independent_fields(tmp_path):
     chat.send("project_edit", field="spreadsheet_id")
     chat.send(text="https://docs.google.com/spreadsheets/d/abc/edit")
     assert bot.store.session(1)["view"] == "settings"
+    chat.send("project_edit", field="worksheet")
+    chat.send(text="Sheet")
     chat.send("project_home")
     assert actions(bot) == {"task", "settings", "projects"}
     assert "generate" not in actions(bot)

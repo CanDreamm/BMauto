@@ -1,14 +1,14 @@
 import hashlib
 import json
 import os
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from .core import Store, tasks_from_rows
+from .core import Store
+from .calendar import load_tasks
 from .google import publish
 from .llm import GenAPI
 from .members import MemberMenus
@@ -41,13 +41,15 @@ class Bot:
             session.pop(key, None)
         session.update(project=project["id"], view="dates", mode=None, page=0,
                        project_revision=project.get("revision", 1), tasks=[])
-        if not project.get("spreadsheet_id") or not project.get("worksheet"):
-            session["dates_error"] = "Укажите Google Таблицу и вкладку в настройках проекта, чтобы появились даты"
+        if not project.get("spreadsheet_id"):
+            session["dates_error"] = "Укажите Google Таблицу в настройках проекта, чтобы появились даты"
         else:
             try:
                 zone = ZoneInfo(project.get("timezone", str(self.zone)))
-                tasks = tasks_from_rows(self.google_for(project).rows(project), project, datetime.now(zone).date())
-                session["tasks"] = [{**asdict(t), "day": t.day.isoformat()} for t in tasks]
+                tasks, warnings = load_tasks(self.google_for(project), project, datetime.now(zone).date())
+                session["tasks"] = tasks
+                if warnings:
+                    session["dates_error"] = "\n".join(warnings)
             except ValueError as exc:
                 session["dates_error"] = str(exc)
             except Exception:
@@ -59,6 +61,8 @@ class Bot:
         task = session["task"]
         identity = {k: v for k, v in task["fields"].items() if k != project["link_column"]}
         parts = [project["id"], task["row"], identity]
+        if "sheet_id" in task:
+            parts.append([task["source_spreadsheet_id"], task["sheet_id"]])
         if project.get("draft_scope"):
             parts.append(project["draft_scope"])
         key = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()

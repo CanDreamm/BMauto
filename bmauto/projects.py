@@ -3,6 +3,8 @@ import uuid
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .calendar import AUTO
+
 
 # Settings are edited independently after creating a project by name.
 FIELDS = [
@@ -10,13 +12,14 @@ FIELDS = [
     ("concept", "Концепция", "Отправьте концепцию проекта и описание аудитории", None),
     ("prompt", "Промпт", "Отправьте промпт для генерации текста публикаций", None),
     ("spreadsheet_id", "Google Таблица", "Отправьте ссылку на Google Таблицу или её ID", None),
-    ("worksheet", "Вкладка таблицы", "Введите точное название вкладки таблицы", "Лист1"),
+    ("worksheet", "Выбор вкладок", "Нажмите «Авто» для вкладок по месяцам или укажите фиксированную вкладку", AUTO),
     ("drive_parent_id", "Папка Google Диска", "Отправьте ссылку на папку проекта в Google Диске или её ID", None),
     ("date_column", "Столбец даты", "Как называется столбец даты?", "Дата"),
     ("weekday_column", "Столбец дня недели", "Как называется столбец дня недели?", "День недели"),
     ("link_column", "Столбец ссылки", "Как называется столбец для ссылки на материалы?", "Ссылка"),
     ("public_read", "Доступ по ссылке", "Открывать созданные папки всем по ссылке? Это откроет доступ к фото и тексту", None),
     ("timezone", "Часовой пояс", "Введите часовой пояс, например Europe/Moscow. По нему определяются будущие даты", "Europe/Moscow"),
+    ("month_rollover_days", "Когда брать следующий месяц", "За сколько дней до конца месяца показывать даты следующего? Введите число от 0 до 31. Если будущих дат текущего месяца нет, следующий берётся сразу", 7),
 ]
 FIELD_MAP = {f[0]: f for f in FIELDS}
 
@@ -35,6 +38,16 @@ def google_id(value, kind):
 
 
 def validate_field(key, value):
+    if key == "month_rollover_days":
+        if isinstance(value, bool):
+            raise ValueError("Введите целое число от 0 до 31")
+        try:
+            result = int(str(value).strip())
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Введите целое число от 0 до 31") from exc
+        if not 0 <= result <= 31:
+            raise ValueError("Введите целое число от 0 до 31")
+        return result
     if key == "public_read":
         if type(value) is not bool:
             raise ValueError("Выберите «Да» или «Нет» кнопкой")

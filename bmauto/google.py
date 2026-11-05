@@ -33,15 +33,31 @@ class Google:
         return response.json() if response.content else {}
 
     def rows(self, project):
+        if "_sheet_id" in project:
+            result = self.request("POST", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}/values:batchGetByDataFilter",
+                                  json={"dataFilters": [{"gridRange": {"sheetId": project["_sheet_id"]}}], "valueRenderOption": "FORMATTED_VALUE"})
+            ranges = result.get("valueRanges", [])
+            return ranges[0].get("valueRange", {}).get("values", []) if ranges else []
         sheet = "'" + project["worksheet"].replace("'", "''") + "'"
         return self.request("GET", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}/values/{quote(sheet, safe='')}").get("values", [])
 
     def set_link(self, project, row, headers, url):
+        if "_sheet_id" in project:
+            column = headers.index(project["link_column"])
+            self.request("POST", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}:batchUpdate", json={"requests": [{"updateCells": {
+                "range": {"sheetId": project["_sheet_id"], "startRowIndex": row - 1, "endRowIndex": row,
+                          "startColumnIndex": column, "endColumnIndex": column + 1},
+                "rows": [{"values": [{"userEnteredValue": {"stringValue": url}}]}], "fields": "userEnteredValue"}}]})
+            return
         column = column_letter(headers.index(project["link_column"]) + 1)
         sheet = "'" + project["worksheet"].replace("'", "''") + "'"
         cell = quote(f"{sheet}!{column}{row}", safe="")
         self.request("PUT", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}/values/{cell}",
                      params={"valueInputOption": "RAW"}, json={"values": [[url]]})
+
+    def worksheets(self, project):
+        result = self.request("GET", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}", params={"fields": "sheets(properties(sheetId,title))"})
+        return [sheet["properties"] for sheet in result.get("sheets", [])]
 
     def new_id(self):
         return self.request("GET", "drive/v3/files/generateIds", params={"count": 1})["ids"][0]
@@ -95,7 +111,14 @@ def publish(google, store, key, project, task):
     draft = store.draft(key)
     if not draft["text"].strip():
         raise ValueError("Сначала сохраните текст публикации")
+    if task.get("source_spreadsheet_id", project["spreadsheet_id"]) != project["spreadsheet_id"]:
+        raise ValueError("Таблица проекта изменилась. Откройте задание заново")
+    project = {**project, "worksheet": task.get("worksheet", project.get("worksheet", "Авто"))}
+    if "sheet_id" in task:
+        project["_sheet_id"] = task["sheet_id"]
     rows = google.rows(project)
+    if not rows:
+        raise ValueError("Исходная вкладка задания пуста. Откройте список дат заново")
     headers = [str(h).strip() for h in rows[0]]
     row = task["row"]
     current = dict(zip(headers, rows[row - 1] + [""] * len(headers))) if row <= len(rows) else {}
