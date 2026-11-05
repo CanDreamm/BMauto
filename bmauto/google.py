@@ -167,8 +167,10 @@ def word_document(text):
 def publish(google, store, key, project, task):
     project = {**DEFAULT_COLUMNS, **project}
     draft = store.draft(key)
-    if not draft["text"].strip():
-        raise ValueError("Сначала сохраните текст публикации")
+    if not draft["text"].strip() and not draft["photos"]:
+        raise ValueError("Сначала сохраните текст или хотя бы одно фото")
+    if len(draft["photos"]) > 9:
+        raise ValueError("Можно отправить не более 9 фотографий")
     if task.get("source_spreadsheet_id", project["spreadsheet_id"]) != project["spreadsheet_id"]:
         raise ValueError("Таблица проекта изменилась. Откройте задание заново")
     project = {**project, "worksheet": task.get("worksheet", project.get("worksheet", "Авто"))}
@@ -201,8 +203,10 @@ def publish(google, store, key, project, task):
         draft["folder"] = draft["folder"] or google.new_id()
         store.save_draft(key, draft)
         google.folder(draft["folder"], draft["parent"], task["day"])
-    files = [("publication.docx", word_document(draft["text"]),
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document")]
+    files = []
+    if draft["text"].strip():
+        files.append(("publication.docx", word_document(draft["text"]),
+                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
     for i, photo in enumerate(draft["photos"], 1):
         files.append((f"photo_{i:02}.jpg", (store.root / photo["path"]).read_bytes(), "image/jpeg"))
     for name, content, mime in files:

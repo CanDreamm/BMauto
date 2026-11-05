@@ -90,10 +90,14 @@ class Bot:
         missing = self.missing_generation_settings(project)
         if missing:
             navigation.insert(0, ("Настройки проекта", {"a": "settings"}))
+        send_button = None
+        if (draft["text"].strip() or draft["photos"]) and (not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
+            label = "Добавить ссылку под заданием" if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
+            send_button = (label, {"a": "publish"})
         if session.get("mode") == "supplement":
             return [("Без дополнений", {"a": "no_supplement"})] + navigation
         if session.get("mode") == "photos":
-            return [("Готово", {"a": "done"})] + navigation
+            return ([send_button] if send_button else []) + [("Готово", {"a": "done"})] + navigation
         buttons = []
         if not draft["folder"]:
             buttons.append(("Сгенерировать текст", {"a": "generate"}))
@@ -101,9 +105,8 @@ class Bot:
                 buttons.append(("Загрузить фотографии", {"a": "photos"}))
         if draft["text"] or draft["photos"]:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
-        if draft["text"].strip() and (not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
-            label = "Добавить ссылку под заданием" if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
-            buttons.append((label, {"a": "publish"}))
+        if send_button:
+            buttons.append(send_button)
         if missing:
             buttons.append(("Настройки проекта", {"a": "settings"}))
         return buttons + [("К датам проекта", {"a": "project_home"})]
@@ -256,6 +259,8 @@ class Bot:
             self.vk.send(user, f"{draft['text'] or 'Текст пока не создан'}\n\nФото: {len(draft['photos'])}/9", self.task_buttons(session, project))
             return
         if action == "publish":
+            session["mode"], session["view"] = None, "task"
+            self.store.save_session(user, session)
             self.vk.send(user, "Сохраняю материалы на Google Диск…")
             url = publish(self.google_for(project), self.store, key, project, task)
             session["task"]["material_url"] = url
