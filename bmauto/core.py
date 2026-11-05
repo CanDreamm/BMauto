@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+DEFAULT_COLUMNS = {"date_column": "Дата", "weekday_column": "День недели", "link_column": "Ссылка"}
+
 
 @dataclass
 class Task:
@@ -26,6 +28,7 @@ def parse_date(value):
 
 
 def tasks_from_rows(rows, project, today):
+    project = {**DEFAULT_COLUMNS, **project}
     if not rows:
         return []
     headers = [str(x).strip() for x in rows[0]]
@@ -59,6 +62,9 @@ class Store:
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS project_members (project_id TEXT NOT NULL, user_id INTEGER NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner', 'member')), PRIMARY KEY (project_id, user_id))")
         self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS project_owner ON project_members(project_id) WHERE role='owner'")
+        self.db.execute("CREATE TABLE IF NOT EXISTS drive_locations (account TEXT NOT NULL, parent TEXT NOT NULL, location TEXT NOT NULL, file_id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(account,parent,location))")
+        if "ready" not in {row[1] for row in self.db.execute("PRAGMA table_info(drive_locations)")}:
+            self.db.execute("ALTER TABLE drive_locations ADD COLUMN ready INTEGER NOT NULL DEFAULT 0")
         self.db.commit()
 
     @staticmethod
@@ -184,6 +190,14 @@ class Store:
     def save_draft(self, key, value):
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO drafts VALUES (?,?)", (key, json.dumps(value)))
+
+    def drive_location(self, account, parent, location):
+        row = self.db.execute("SELECT file_id,ready FROM drive_locations WHERE account=? AND parent=? AND location=?", (account, parent, location)).fetchone()
+        return {"id": row[0], "ready": bool(row[1])} if row else None
+
+    def save_drive_location(self, account, parent, location, file_id, ready=False):
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO drive_locations VALUES (?,?,?,?,?)", (account, parent, location, file_id, int(ready)))
 
 
 def column_letter(index):

@@ -1,5 +1,7 @@
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+
+import pytest
 
 from bmauto.core import Store
 from bmauto.google import Google
@@ -7,6 +9,15 @@ from bmauto.main import Bot
 from bmauto.vk import VK, keyboard
 from test_projects import Conversation, actions, bot_at, create_project
 from test_workflow import FakeGoogle, FakeLLM, FakeVK
+
+
+@pytest.fixture(autouse=True)
+def calendar_clock(monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(3000, 1, 1, tzinfo=tz)
+    monkeypatch.setattr("bmauto.main.datetime", Clock)
 
 
 def serialized(bot):
@@ -18,7 +29,7 @@ def payload(button):
 
 
 def many_dates(google, count):
-    start = date(3000, 1, 1)
+    start = date(3000, 1, 2)
     google.table = [["Дата", "День недели", "Задание", "Ссылка"]] + [
         [(start + timedelta(days=i)).strftime("%d.%m.%Y"), "Среда", f"Задание {i}", ""]
         for i in range(count)
@@ -32,7 +43,7 @@ def test_select_project_directly_shows_two_column_dates_and_only_two_footer_butt
     rows = serialized(bot)
     assert [len(row) for row in rows] == [2, 2, 1, 1, 1]
     assert [payload(b)["i"] for row in rows[:-2] for b in row] == list(range(5))
-    assert rows[0][0]["action"]["label"] == "01.01.3000 — Среда"
+    assert rows[0][0]["action"]["label"] == "02.01.3000 — Среда"
     assert rows[-2][0]["action"]["label"] == "Настройки"
     assert rows[-1][0]["action"]["label"] == "Все проекты"
     assert actions(bot) == {"task", "settings", "projects"}
@@ -101,7 +112,7 @@ def test_settings_contain_fields_and_members_without_nested_settings_button(tmp_
     chat = Conversation(bot)
     chat.send("project", p="test")
     chat.send("settings")
-    assert actions(bot) == {"project_edit", "settings", "members", "google_connect", "project_home", "project_delete"}
+    assert actions(bot) == {"project_edit", "members", "google_connect", "project_home", "project_delete"}
     labels = [b["action"]["label"] for row in serialized(bot) for b in row]
     assert "Участники" in labels
     assert "Настройки" not in labels and "Настройки проекта" not in labels

@@ -1,5 +1,5 @@
 import io
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from docx import Document
@@ -11,7 +11,10 @@ from bmauto.main import Bot
 
 class FakeGoogle:
     def __init__(self):
-        self.table = [["Дата", "День недели", "Задание", "Ссылка"], ["20.12.2030", "Пятница", "Текст", ""]]
+        from bmauto.main import datetime
+        from zoneinfo import ZoneInfo
+        day = datetime.now(ZoneInfo("Europe/Moscow")).date() + timedelta(days=1)
+        self.table = [["Дата", "День недели", "Задание", "Ссылка"], [day.strftime("%d.%m.%Y"), "Пятница", "Текст", ""]]
         self.files = {}
         self.created = []
         self.shared = []
@@ -20,6 +23,16 @@ class FakeGoogle:
 
     def rows(self, project):
         return self.table
+
+    def worksheets(self, project):
+        from bmauto.calendar import MONTHS
+        from bmauto.main import datetime
+        from zoneinfo import ZoneInfo
+        month = datetime.now(ZoneInfo("Europe/Moscow")).month
+        return [{"sheetId": 0, "title": MONTHS[month - 1]}, {"sheetId": 1, "title": MONTHS[month % 12]}]
+
+    def project_folder(self, store, project):
+        return "project-parent"
 
     def new_id(self):
         self.count += 1

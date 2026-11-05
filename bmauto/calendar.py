@@ -2,21 +2,13 @@
 from calendar import monthrange
 from dataclasses import asdict
 
-from .core import tasks_from_rows
+from .core import DEFAULT_COLUMNS, tasks_from_rows
 
 MONTHS = ("Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь")
-AUTO = "Авто"
-
-
-def monthly(project):
-    name = project.get("worksheet", AUTO).strip().casefold()
-    return name in {"авто", "auto", "лист1", *(m.casefold() for m in MONTHS)}
 
 
 def load_tasks(google, project, today):
-    if not monthly(project):
-        tasks = tasks_from_rows(google.rows(project), project, today)
-        return [{**asdict(t), "day": t.day.isoformat(), "worksheet": project["worksheet"]} for t in tasks], []
+    project = {**DEFAULT_COLUMNS, **project}
     sheets = google.worksheets(project)
     warnings = []
 
@@ -40,7 +32,7 @@ def load_tasks(google, project, today):
     current = read_month(today.year, today.month)
     remaining = monthrange(today.year, today.month)[1] - today.day + 1
     result = list(current)
-    if remaining <= int(project.get("month_rollover_days", 7)) or not current:
+    if remaining <= 7 or not current:
         year, month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
         result.extend(read_month(year, month))
     return sorted(result, key=lambda t: (t["day"], t["row"])), warnings

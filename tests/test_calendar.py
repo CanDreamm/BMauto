@@ -98,11 +98,11 @@ def test_ambiguous_month_names_are_reported(monthly_project):
     assert any("неоднозначно" in warning for warning in warnings)
 
 
-def test_rollover_window_is_configurable(monthly_project):
+def test_rollover_is_automatic_and_ignores_old_settings(monthly_project):
     google = MonthlyGoogle([(0, "Ноябрь", ["30.11.2026"]), (1, "Декабрь", ["01.12.2026"])])
-    tasks, _ = load_tasks(google, {**monthly_project, "month_rollover_days": 3}, date(2026, 11, 26))
+    tasks, _ = load_tasks(google, {**monthly_project, "month_rollover_days": 31}, date(2026, 11, 23))
     assert len(tasks) == 1
-    tasks, _ = load_tasks(google, {**monthly_project, "month_rollover_days": 3}, date(2026, 11, 28))
+    tasks, _ = load_tasks(google, {**monthly_project, "month_rollover_days": 0}, date(2026, 11, 24))
     assert len(tasks) == 2
 
 

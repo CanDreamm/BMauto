@@ -2,9 +2,7 @@ import re
 import secrets
 import uuid
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-from .calendar import AUTO
+from .core import DEFAULT_COLUMNS
 
 
 # Settings are edited independently after creating a project by name.
@@ -12,14 +10,6 @@ FIELDS = [
     ("concept", "Концепция", "Отправьте концепцию проекта и описание аудитории", None),
     ("prompt", "Промпт", "Отправьте промпт для генерации текста публикаций", None),
     ("spreadsheet_id", "Google Таблица", "Отправьте ссылку на Google Таблицу или её ID", None),
-    ("worksheet", "Выбор вкладок", "Нажмите «Авто» для вкладок по месяцам или укажите фиксированную вкладку", AUTO),
-    ("drive_parent_id", "Папка Google Диска", "Отправьте ссылку на папку проекта в Google Диске или её ID", None),
-    ("date_column", "Столбец даты", "Как называется столбец даты?", "Дата"),
-    ("weekday_column", "Столбец дня недели", "Как называется столбец дня недели?", "День недели"),
-    ("link_column", "Столбец ссылки", "Как называется столбец для ссылки на материалы?", "Ссылка"),
-    ("public_read", "Доступ по ссылке", "Открывать созданные папки всем по ссылке? Это откроет доступ к фото и тексту", None),
-    ("timezone", "Часовой пояс", "Введите часовой пояс, например Europe/Moscow. По нему определяются будущие даты", "Europe/Moscow"),
-    ("month_rollover_days", "Когда брать следующий месяц", "За сколько дней до конца месяца показывать даты следующего? Введите число от 0 до 31. Если будущих дат текущего месяца нет, следующий берётся сразу", 7),
 ]
 FIELD_MAP = {f[0]: f for f in FIELDS}
 FIELD_MAP["name"] = ("name", "Название", "Введите название проекта", None)
@@ -39,39 +29,16 @@ def google_id(value, kind):
 
 
 def validate_field(key, value):
-    if key == "month_rollover_days":
-        if isinstance(value, bool):
-            raise ValueError("Введите целое число от 0 до 31")
-        try:
-            result = int(str(value).strip())
-        except (ValueError, TypeError) as exc:
-            raise ValueError("Введите целое число от 0 до 31") from exc
-        if not 0 <= result <= 31:
-            raise ValueError("Введите целое число от 0 до 31")
-        return result
-    if key == "public_read":
-        if type(value) is not bool:
-            raise ValueError("Выберите «Да» или «Нет» кнопкой")
-        return value
+    if key not in FIELD_MAP:
+        raise ValueError("Эта настройка больше не используется")
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Значение не может быть пустым")
     value = value.strip()
     if key == "name" and len(value) > 40:
         raise ValueError("Название должно быть не длиннее 40 символов")
-    if key in {"spreadsheet_id", "drive_parent_id"}:
+    if key == "spreadsheet_id":
         return google_id(value, key)
-    if key == "timezone":
-        try:
-            ZoneInfo(value)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise ValueError("Неизвестный часовой пояс. Например: Europe/Moscow") from exc
     return value
-
-
-def validate_columns(project):
-    columns = [project.get(k) for k in ("date_column", "weekday_column", "link_column") if project.get(k)]
-    if len(columns) != len(set(columns)):
-        raise ValueError("Столбцы даты, дня недели и ссылки должны иметь разные названия")
 
 
 class ProjectMenus:
@@ -110,12 +77,9 @@ class ProjectMenus:
         if not self.store.can_access(project["id"], user, self.admins):
             raise ValueError("Нет доступа к проекту")
         self.view(user, "settings")
-        page = min(max(0, page), (len(FIELDS) - 1) // 6)
         details = [f"Настройки проекта «{project['name']}»"]
         for key, label, _, default in FIELDS:
             value = project.get(key, default)
-            if key == "public_read":
-                value = "Всем по ссылке" if value else "Только существующие права"
             details.append(f"{label}: {value if value is not None else 'Не задано'}")
         connected = self.connections is not None and self.connections.connected(project)
         buttons = [("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"})]
@@ -123,11 +87,7 @@ class ProjectMenus:
             buttons.append([("Назад", {"a": "project_home"}),
                             ("Удалить проект", {"a": "project_delete", "_color": "negative"})])
             buttons.append(("Участники", {"a": "members"}))
-            buttons.extend((label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS[page * 6:(page + 1) * 6])
-            if page:
-                buttons.append(("Предыдущие поля", {"a": "settings", "page": page - 1}))
-            if (page + 1) * 6 < len(FIELDS):
-                buttons.append(("Следующие поля", {"a": "settings", "page": page + 1}))
+            buttons.extend((label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS)
         else:
             details.append("Вы можете подключить свой Google для этого проекта. Остальные настройки меняет владелец проекта")
             buttons.append(("Назад", {"a": "project_home"}))
@@ -136,7 +96,7 @@ class ProjectMenus:
         self.vk.send(user, message, buttons)
 
     def ask(self, user, wizard):
-        if wizard["kind"] != "create" and wizard.get("field") == "name":
+        if wizard["kind"] != "create" and (wizard.get("field") == "name" or wizard.get("field") not in FIELD_MAP):
             session = self.store.session(user)
             session.pop("wizard", None)
             self.store.save_session(user, session)
@@ -151,14 +111,9 @@ class ProjectMenus:
         key, label, prompt, default = FIELD_MAP["name"] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
         if wizard["kind"] != "create":
             current = self.store.projects()[wizard["project"]].get(key, default)
-            if key == "public_read":
-                current = "Всем по ссылке" if current else "Только существующие права"
             prompt = f"{label}\nТекущее значение: {current if current is not None else 'Не задано'}\n\n{prompt}"
         buttons = []
-        if key == "public_read":
-            buttons = [("Да, всем по ссылке", {"a": "project_value", "value": True}),
-                       ("Нет, ограниченный доступ", {"a": "project_value", "value": False})]
-        elif default is not None:
+        if default is not None:
             buttons = [(f"Оставить: {default}", {"a": "project_default"})]
         if wizard["kind"] == "create":
             buttons.append(("В меню", {"a": "projects"}))
@@ -169,7 +124,7 @@ class ProjectMenus:
 
     def input_buttons(self, wizard):
         key = "name" if wizard["kind"] == "create" else wizard["field"]
-        actions = {"project_value"} if key == "public_read" else set()
+        actions = set()
         if FIELD_MAP[key][3] is not None:
             actions.add("project_default")
         return actions
@@ -223,7 +178,7 @@ class ProjectMenus:
                 raise ValueError("Нет доступа к проекту")
             project = self.store.projects()[session["project"]]
             session["settings_revision"] = project.get("revision", 1)
-            session["settings_page"] = int(payload.get("page", 0))
+            session["settings_page"] = 0
             self.store.save_session(user, session)
             self.show_settings(user, project, int(payload.get("page", 0)))
             return True
@@ -232,13 +187,13 @@ class ProjectMenus:
                 raise ValueError("Неизвестная настройка")
             project = self.managed(user, session.get("project"))
             session["wizard"] = {"kind": "edit", "field": payload["field"], "project": project["id"],
-                                 "revision": project.get("revision", 1), "page": list(FIELD_MAP).index(payload["field"]) // 6}
+                                 "revision": project.get("revision", 1), "page": 0}
         elif "wizard" in session and (action is None or action in {"project_value", "project_default"}):
             wizard = session["wizard"]
-            if wizard["kind"] != "create" and wizard.get("field") == "name":
+            if wizard["kind"] != "create" and (wizard.get("field") == "name" or wizard.get("field") not in FIELD_MAP):
                 session.pop("wizard", None)
                 self.store.save_session(user, session)
-                raise ValueError("Смена названия проекта отключена")
+                raise ValueError("Эта настройка больше не используется")
             if action is not None and action not in self.input_buttons(wizard):
                 self.ask(user, wizard)
                 return True
@@ -249,13 +204,12 @@ class ProjectMenus:
                 if user not in self.admins:
                     raise ValueError("Создавать проекты может только администратор")
                 values = {k: default for k, _, _, default in FIELDS if default is not None}
-                values.update(id=uuid.uuid4().hex, name=value, public_read=True)
+                values.update(DEFAULT_COLUMNS, id=uuid.uuid4().hex, name=value)
                 project = self.store.save_project(values, owner=user)
             else:
                 project = self.managed(user, wizard["project"])
                 updated = {**project, key: value}
-                validate_columns(updated)
-                if key in {"spreadsheet_id", "worksheet", "drive_parent_id", "public_read"} and project.get(key) != value:
+                if key == "spreadsheet_id" and project.get(key) != value:
                     # A changed destination must not reuse a draft/folder from the old one.
                     updated["draft_scope"] = uuid.uuid4().hex
                 project = self.store.save_project(updated, wizard["revision"])

@@ -40,17 +40,14 @@ def test_create_and_restart_without_config_json(tmp_path):
     assert "drive_parent_id" not in project
     assert "concept" not in project and "prompt" not in project
     assert project["date_column"] == "Дата"
-    assert project["public_read"] is True
-    assert project["timezone"] == "Europe/Moscow"
+    assert "public_read" not in project and "timezone" not in project
     assert "wizard" not in bot.store.session(1)
     restored = bot_at(tmp_path)
     assert restored.store.projects()[project["id"]] == project
 
 
 @pytest.mark.parametrize("field,value", [("concept", "Новая концепция"),
-                                        ("prompt", "Новый промпт"), ("worksheet", "Новая вкладка"),
-                                        ("date_column", "Дата публикации"), ("weekday_column", "День"),
-                                        ("link_column", "Материалы"), ("timezone", "Asia/Yekaterinburg")])
+                                        ("prompt", "Новый промпт")])
 def test_edit_fields_survive_restart_and_legacy_import(tmp_path, project, field, value):
     config = {"projects": [project]}
     bot = bot_at(tmp_path, config)
@@ -65,19 +62,20 @@ def test_edit_fields_survive_restart_and_legacy_import(tmp_path, project, field,
     assert "task" not in restarted.store.session(1)
 
 
-def test_public_access_edit_and_new_destination_isolation(tmp_path, project):
+@pytest.mark.parametrize("field", ["worksheet", "drive_parent_id", "date_column", "weekday_column", "link_column", "public_read", "timezone", "month_rollover_days"])
+def test_removed_settings_cannot_be_changed_by_old_buttons(tmp_path, project, field):
     bot = bot_at(tmp_path, {"projects": [project]})
     chat = Conversation(bot)
     chat.send("project", p="test")
-    chat.send("project_edit", field="public_read")
-    chat.send("project_value", value=False)
+    before = bot.store.projects()["test"].copy()
+    chat.send("project_edit", field=field)
+    chat.send(text="Новое значение")
     updated = bot.store.projects()["test"]
-    assert updated["public_read"] is False and updated["draft_scope"]
+    assert updated == before and "wizard" not in bot.store.session(1)
 
 
 @pytest.mark.parametrize("field,value,expected", [
     ("spreadsheet_id", "https://docs.google.com/spreadsheets/d/new_sheet/edit", "new_sheet"),
-    ("drive_parent_id", "https://drive.google.com/drive/u/0/folders/new_folder", "new_folder"),
 ])
 def test_change_google_links(tmp_path, project, field, value, expected):
     bot = bot_at(tmp_path, {"projects": [project]})
@@ -110,16 +108,16 @@ def test_wizard_resumes_after_restart(tmp_path):
     assert "wizard" not in restarted.store.session(1)
 
 
-def test_duplicate_column_is_rejected(tmp_path, project):
+def test_retired_pending_input_cannot_change_columns(tmp_path, project):
     bot = bot_at(tmp_path, {"projects": [project]})
     chat = Conversation(bot)
     chat.send("project", p="test")
-    chat.send("project_edit", field="link_column")
+    session = bot.store.session(1)
+    session.update(wizard={"kind": "edit", "field": "link_column", "project": "test", "revision": 1}, view="edit")
+    bot.store.save_session(1, session)
     chat.send(text="Дата")
     assert bot.store.projects()["test"]["link_column"] == "Ссылка"
-    assert "wizard" in bot.store.session(1)
-    chat.send(text="Материалы")
-    assert bot.store.projects()["test"]["link_column"] == "Материалы"
+    assert "wizard" not in bot.store.session(1)
 
 
 def test_other_operator_must_reload_after_settings_change(tmp_path, project):
@@ -223,16 +221,16 @@ def test_return_from_edit_does_not_save_input(tmp_path, project):
     assert actions(bot) == {"task", "settings", "projects"}
 
 
-def test_return_to_settings_keeps_page(tmp_path, project):
+def test_return_to_settings_uses_one_screen(tmp_path, project):
     bot = bot_at(tmp_path, {"projects": [project]})
     chat = Conversation(bot)
     chat.send("project", p="test")
     chat.send("settings", page=1)
-    chat.send("project_edit", field="timezone")
+    chat.send("project_edit", field="concept")
     back = next(p for _, p in bot.vk.messages[-1][1] if p["a"] == "settings")
-    assert back["page"] == 1
+    assert back["page"] == 0
     chat.send(**{"action": back["a"], "page": back["page"]})
-    assert bot.store.session(1)["settings_page"] == 1
+    assert bot.store.session(1)["settings_page"] == 0
     assert "wizard" not in bot.store.session(1)
     assert "project_home" in actions(bot)
 

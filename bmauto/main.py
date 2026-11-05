@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from .core import Store
+from .core import DEFAULT_COLUMNS, Store
 from .calendar import load_tasks
 from .google import publish
 from .llm import GenAPI
@@ -20,14 +20,13 @@ from .vk import VK
 
 class Bot:
     def __init__(self, config, store, vk, google, llm, allowed, connections=None):
-        store.seed_projects([{**p, "timezone": p.get("timezone", config.get("timezone", "Europe/Moscow"))}
-                             for p in config.get("projects", [])])
+        store.seed_projects(config.get("projects", []))
         store.remove_demo()
         store.ensure_owners(min(allowed) if allowed else None)
         self.project_menus = ProjectMenus(store, vk, allowed, self.open_project, connections)
         self.member_menus = MemberMenus(store, vk, allowed)
         self.google_menus = GoogleMenus(connections, store, vk, allowed)
-        self.zone = ZoneInfo(config.get("timezone", "Europe/Moscow"))
+        self.zone = ZoneInfo("Europe/Moscow")
         self.store, self.vk, self.google, self.llm, self.allowed = store, vk, google, llm, allowed
 
     def google_for(self, project):
@@ -45,8 +44,7 @@ class Bot:
             session["dates_error"] = "Укажите Google Таблицу в настройках проекта, чтобы появились даты"
         else:
             try:
-                zone = ZoneInfo(project.get("timezone", str(self.zone)))
-                tasks, warnings = load_tasks(self.google_for(project), project, datetime.now(zone).date())
+                tasks, warnings = load_tasks(self.google_for(project), project, datetime.now(self.zone).date())
                 session["tasks"] = tasks
                 if warnings:
                     session["dates_error"] = "\n".join(warnings)
@@ -59,7 +57,7 @@ class Bot:
 
     def draft_for(self, session, project):
         task = session["task"]
-        identity = {k: v for k, v in task["fields"].items() if k != project["link_column"]}
+        identity = {k: v for k, v in task["fields"].items() if k != project.get("link_column", DEFAULT_COLUMNS["link_column"])}
         parts = [project["id"], task["row"], identity]
         if "sheet_id" in task:
             parts.append([task["source_spreadsheet_id"], task["sheet_id"]])
@@ -83,7 +81,7 @@ class Bot:
                 buttons.append(("Загрузить фотографии", {"a": "photos"}))
         if draft["text"] or draft["photos"]:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
-        if draft["text"].strip() and project.get("drive_parent_id") and not draft["published"]:
+        if draft["text"].strip() and not draft["published"]:
             buttons.append(("Повторить отправку" if draft["folder"] else "Отправить в таблицу", {"a": "publish"}))
         return buttons + [("К датам проекта", {"a": "project_home"})]
 
@@ -262,7 +260,7 @@ class Bot:
         if session.get("mode") == "supplement" and (not action or action == "no_supplement"):
             if not text and action != "no_supplement":
                 raise ValueError("Напишите дополнение текстом")
-            description = "\n".join(f"{k}: {v}" for k, v in task["fields"].items() if v.strip() and k != project["link_column"])
+            description = "\n".join(f"{k}: {v}" for k, v in task["fields"].items() if v.strip() and k != project.get("link_column", DEFAULT_COLUMNS["link_column"]))
             self.vk.send(user, "Генерирую текст…")
             draft["text"] = self.llm.generate(project, description, "" if action == "no_supplement" else text)
             self.store.save_draft(key, draft)
@@ -329,7 +327,7 @@ def main():
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     vk = VK(os.environ["VK_TOKEN"], int(os.environ["VK_GROUP_ID"]))
     store = Store(os.getenv("APP_DATA", "data"))
-    store.seed_projects([{**p, "timezone": p.get("timezone", config.get("timezone", "Europe/Moscow"))} for p in config.get("projects", [])])
+    store.seed_projects(config.get("projects", []))
     connections = connections_from_env(store)
     bot = Bot(config, store, vk, ProjectGoogle(connections), GenAPI(),
               {int(x.strip()) for x in os.environ["VK_ALLOWED_USERS"].split(",") if x.strip()}, connections)
