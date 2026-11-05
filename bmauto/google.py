@@ -6,7 +6,7 @@ import httpx
 from docx import Document
 from google.auth.transport.requests import Request
 
-from .core import DEFAULT_COLUMNS, column_letter
+from .core import DEFAULT_COLUMNS, column_letter, table_headers
 
 SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
 
@@ -162,7 +162,7 @@ def publish(google, store, key, project, task):
     rows = google.rows(project)
     if not rows:
         raise ValueError("Исходная вкладка задания пуста. Откройте список дат заново")
-    headers = [str(h).strip() for h in rows[0]]
+    headers = table_headers(rows)
     row = task["row"]
     current = dict(zip(headers, rows[row - 1] + [""] * len(headers))) if row <= len(rows) else {}
     expected = task["fields"]

@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 DEFAULT_COLUMNS = {"date_column": "Дата", "weekday_column": "День недели", "link_column": "Ссылка"}
+HEADER_ROW = 2
 
 
 @dataclass
@@ -27,18 +28,25 @@ def parse_date(value):
     raise ValueError(f"Неподдерживаемая дата: {value}")
 
 
+def table_headers(rows):
+    if len(rows) < HEADER_ROW or not rows[HEADER_ROW - 1]:
+        raise ValueError("Вторая строка таблицы должна содержать заголовки")
+    headers = [str(x).strip() for x in rows[HEADER_ROW - 1]]
+    if len(headers) != len(set(headers)) or "" in headers:
+        raise ValueError("Заголовки таблицы должны быть непустыми и уникальными")
+    return headers
+
+
 def tasks_from_rows(rows, project, today):
     project = {**DEFAULT_COLUMNS, **project}
     if not rows:
         return []
-    headers = [str(x).strip() for x in rows[0]]
+    headers = table_headers(rows)
     required = [project[k] for k in ("date_column", "weekday_column", "link_column")]
-    if len(headers) != len(set(headers)) or "" in headers:
-        raise ValueError("Заголовки таблицы должны быть непустыми и уникальными")
     if any(name not in headers for name in required):
         raise ValueError("В таблице нет обязательных столбцов: " + ", ".join(required))
     result = []
-    for number, row in enumerate(rows[1:], 2):
+    for number, row in enumerate(rows[HEADER_ROW:], HEADER_ROW + 1):
         fields = dict(zip(headers, [str(x) for x in row] + [""] * (len(headers) - len(row))))
         value = fields[project["date_column"]].strip()
         if not value:

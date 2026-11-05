@@ -14,7 +14,7 @@ class FakeGoogle:
         from bmauto.main import datetime
         from zoneinfo import ZoneInfo
         day = datetime.now(ZoneInfo("Europe/Moscow")).date() + timedelta(days=1)
-        self.table = [["Дата", "День недели", "Задание", "Ссылка"], [day.strftime("%d.%m.%Y"), "Пятница", "Текст", ""]]
+        self.table = [["План публикаций"], ["Дата", "День недели", "Задание", "Ссылка"], [day.strftime("%d.%m.%Y"), "Пятница", "Текст", ""]]
         self.files = {}
         self.created = []
         self.shared = []
@@ -66,21 +66,21 @@ def task(google, project):
 
 
 def test_future_dates_and_all_fields(project):
-    rows = [["Дата", "День недели", "Ссылка", "Задание"],
+    rows = [["План публикаций"], ["Дата", "День недели", "Ссылка", "Задание"],
             ["01.01.2026", "Четверг"], ["02.01.2026", "Пятница", "", "Фото машин"], ["", "", "", "skip"]]
     tasks = tasks_from_rows(rows, project, date(2026, 1, 1))
-    assert len(tasks) == 1 and tasks[0].row == 3
+    assert len(tasks) == 1 and tasks[0].row == 4
     assert "Задание: Фото машин" in tasks[0].description()
 
 
 def test_invalid_date_is_visible(project):
-    with pytest.raises(ValueError, match="Строка 2"):
-        tasks_from_rows([["Дата", "День недели", "Ссылка"], ["31.02.2030"]], project, date.today())
+    with pytest.raises(ValueError, match="Строка 3"):
+        tasks_from_rows([["План публикаций"], ["Дата", "День недели", "Ссылка"], ["31.02.2030"]], project, date.today())
 
 
 def test_duplicate_headers_rejected(project):
     with pytest.raises(ValueError):
-        tasks_from_rows([["Дата", "Дата", "Ссылка"]], project, date.today())
+        tasks_from_rows([["План публикаций"], ["Дата", "Дата", "Ссылка"]], project, date.today())
 
 
 def test_word_contains_text():
@@ -113,7 +113,8 @@ def test_publish_retry_does_not_duplicate_files(tmp_path, project):
     url = publish(google, Store(tmp_path), "key", project, chosen)
     assert publish(google, store, "key", project, chosen) == url
     assert google.created == ["publication.docx", "photo_01.jpg"]
-    assert google.table[1][3] == url
+    assert google.table[2][3] == url
+    assert google.table[:2] == [["План публикаций"], ["Дата", "День недели", "Задание", "Ссылка"]]
     assert google.shared
 
 
@@ -123,7 +124,7 @@ def test_changed_task_not_published(tmp_path, project):
     draft = store.draft("key")
     draft["text"] = "Text"
     store.save_draft("key", draft)
-    google.table[1][2] = "Changed"
+    google.table[2][2] = "Changed"
     with pytest.raises(ValueError, match="изменилось"):
         publish(google, store, "key", project, chosen)
     assert not google.files
@@ -135,7 +136,7 @@ def test_existing_link_not_overwritten(tmp_path, project):
     draft = store.draft("key")
     draft["text"] = "Text"
     store.save_draft("key", draft)
-    google.table[1][3] = "https://existing.example"
+    google.table[2][3] = "https://existing.example"
     with pytest.raises(ValueError, match="перезапись"):
         publish(google, store, "key", project, chosen)
 

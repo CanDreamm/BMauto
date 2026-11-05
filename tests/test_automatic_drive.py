@@ -127,7 +127,7 @@ def test_publication_always_shares_and_ignores_old_parent_setting(tmp_path, proj
     final = store.draft("draft")
     assert final["parent"] == "project-parent"
     assert google.shared == [final["folder"]]
-    assert google.table[1][3] == url
+    assert google.table[2][3] == url
 
 
 def test_settings_only_show_essential_fields_without_pages(tmp_path, project):

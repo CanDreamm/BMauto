@@ -19,7 +19,7 @@ HEADERS = ["Дата", "День недели", "Задание", "Ссылка"
 class MonthlyGoogle(FakeGoogle):
     def __init__(self, tables):
         super().__init__()
-        self.tables = {sheet_id: [list(HEADERS)] + [[day, "Среда", "Текст", ""] for day in days]
+        self.tables = {sheet_id: [["План публикаций"], list(HEADERS)] + [[day, "Среда", "Текст", ""] for day in days]
                        for sheet_id, _, days in tables}
         self.sheets = [{"sheetId": sheet_id, "title": title} for sheet_id, title, _ in tables]
         self.reads, self.writes = [], []
@@ -116,9 +116,9 @@ def test_publish_uses_original_sheet_id_after_rename(tmp_path, monthly_project):
     draft["text"] = "Публикация"
     store.save_draft("december", draft)
     url = publish(google, store, "december", monthly_project, task)
-    assert google.writes == [(1, 2, url)]
-    assert google.tables[0][1][3] == ""
-    assert google.tables[1][1][3] == url
+    assert google.writes == [(1, 3, url)]
+    assert google.tables[0][2][3] == ""
+    assert google.tables[1][2][3] == url
 
 
 def test_two_months_with_same_row_number_have_separate_shared_drafts(tmp_path, monthly_project, monkeypatch):

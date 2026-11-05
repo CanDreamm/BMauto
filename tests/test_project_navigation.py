@@ -30,7 +30,7 @@ def payload(button):
 
 def many_dates(google, count):
     start = date(3000, 1, 2)
-    google.table = [["Дата", "День недели", "Задание", "Ссылка"]] + [
+    google.table = [["План публикаций"], ["Дата", "День недели", "Задание", "Ссылка"]] + [
         [(start + timedelta(days=i)).strftime("%d.%m.%Y"), "Среда", f"Задание {i}", ""]
         for i in range(count)
     ]
@@ -79,7 +79,7 @@ def test_new_project_and_empty_calendar_have_exact_footer(tmp_path, project):
     assert len(serialized(bot)) == 2
     assert "настройках" in bot.vk.messages[-1][0]
     empty = bot_at(tmp_path / "other", {"projects": [project]})
-    empty.google.table = [["Дата", "День недели", "Ссылка"]]
+    empty.google.table = [["План публикаций"], ["Дата", "День недели", "Ссылка"]]
     Conversation(empty).send("project", p="test")
     assert actions(empty) == {"settings", "projects"}
     assert "Будущих дат нет" in empty.vk.messages[-1][0]
