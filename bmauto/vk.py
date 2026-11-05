@@ -12,9 +12,9 @@ def keyboard(buttons):
     def action(label, payload):
         if "open_link" in payload:
             return {"type": "open_link", "label": label[:40], "link": payload["open_link"]}
-        return {"type": "text", "label": label[:40], "payload": json.dumps(payload)}
+        return {"type": "text", "label": label[:40], "payload": json.dumps({k: v for k, v in payload.items() if k != "_color"})}
     return {"inline": False, "one_time": False, "buttons": [
-        [({"action": action(label, payload)} if "open_link" in payload else {"action": action(label, payload), "color": "secondary"})
+        [({"action": action(label, payload)} if "open_link" in payload else {"action": action(label, payload), "color": payload.get("_color", "secondary")})
          for label, payload in row] for row in rows
     ]}
 

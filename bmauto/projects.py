@@ -1,4 +1,5 @@
 import re
+import secrets
 import uuid
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -8,7 +9,6 @@ from .calendar import AUTO
 
 # Settings are edited independently after creating a project by name.
 FIELDS = [
-    ("name", "Название", "Введите название проекта", None),
     ("concept", "Концепция", "Отправьте концепцию проекта и описание аудитории", None),
     ("prompt", "Промпт", "Отправьте промпт для генерации текста публикаций", None),
     ("spreadsheet_id", "Google Таблица", "Отправьте ссылку на Google Таблицу или её ID", None),
@@ -22,6 +22,7 @@ FIELDS = [
     ("month_rollover_days", "Когда брать следующий месяц", "За сколько дней до конца месяца показывать даты следующего? Введите число от 0 до 31. Если будущих дат текущего месяца нет, следующий берётся сразу", 7),
 ]
 FIELD_MAP = {f[0]: f for f in FIELDS}
+FIELD_MAP["name"] = ("name", "Название", "Введите название проекта", None)
 
 
 def google_id(value, kind):
@@ -120,6 +121,8 @@ class ProjectMenus:
         if self.store.can_manage(project["id"], user, self.admins):
             connected = self.connections is not None and self.connections.connected(project)
             buttons = [("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"})]
+            buttons.append([("Назад", {"a": "project_home"}),
+                            ("Удалить проект", {"a": "project_delete", "_color": "negative"})])
             buttons.extend((label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS[page * 6:(page + 1) * 6])
             if page:
                 buttons.append(("Предыдущие поля", {"a": "settings", "page": page - 1}))
@@ -128,12 +131,18 @@ class ProjectMenus:
             buttons.append(("Участники", {"a": "members"}))
         else:
             details.append("Настройки доступны для просмотра. Изменения вносит владелец проекта")
-        buttons.append(("К датам проекта", {"a": "project_home"}))
+            buttons.append(("Назад", {"a": "project_home"}))
         message = (f"Настройки проекта «{project['name']}»\nВыберите параметр"
                    if self.store.can_manage(project["id"], user, self.admins) else "\n\n".join(details))
         self.vk.send(user, message, buttons)
 
     def ask(self, user, wizard):
+        if wizard["kind"] != "create" and wizard.get("field") == "name":
+            session = self.store.session(user)
+            session.pop("wizard", None)
+            self.store.save_session(user, session)
+            self.show_settings(user, self.managed(user, wizard["project"]))
+            return
         if wizard["kind"] == "create":
             if user not in self.admins:
                 raise ValueError("Создавать проекты может только администратор")
@@ -168,6 +177,31 @@ class ProjectMenus:
 
     def handle(self, user, action, payload, text, session):
         """Return True when the message belongs to project administration."""
+        if action == "project_delete":
+            project = self.managed(user, session.get("project"))
+            session.pop("wizard", None)
+            token = secrets.token_urlsafe(16)
+            session.update(view="project_delete", mode=None, delete_confirmation={
+                "project": project["id"], "revision": project.get("revision", 1), "token": token})
+            self.store.save_session(user, session)
+            self.show_delete(user, project, session["delete_confirmation"])
+            return True
+        if action == "project_delete_confirm":
+            confirmation = session.get("delete_confirmation", {})
+            if (session.get("view") != "project_delete" or not confirmation or
+                payload.get("p") != session.get("project") or payload.get("p") != confirmation.get("project") or
+                not isinstance(payload.get("token"), str) or not secrets.compare_digest(payload["token"].encode(), confirmation["token"].encode())):
+                raise ValueError("Подтверждение устарело. Откройте настройки проекта")
+            try:
+                self.store.delete_project(session["project"], user, self.admins, confirmation["revision"])
+            except ValueError:
+                session.pop("delete_confirmation", None)
+                session["view"] = "settings"
+                self.store.save_session(user, session)
+                raise
+            self.vk.send(user, "Проект удалён из бота. Файлы на Google Диске и данные таблицы сохранены")
+            self.show_projects(user)
+            return True
         if action in {"projects", "project_page"}:
             session.pop("wizard", None)
             session["mode"] = None
@@ -195,13 +229,17 @@ class ProjectMenus:
             self.show_settings(user, project, int(payload.get("page", 0)))
             return True
         elif action == "project_edit":
-            if payload.get("field") not in FIELD_MAP:
+            if payload.get("field") not in FIELD_MAP or payload.get("field") == "name":
                 raise ValueError("Неизвестная настройка")
             project = self.managed(user, session.get("project"))
             session["wizard"] = {"kind": "edit", "field": payload["field"], "project": project["id"],
                                  "revision": project.get("revision", 1), "page": list(FIELD_MAP).index(payload["field"]) // 6}
         elif "wizard" in session and (action is None or action in {"project_value", "project_default"}):
             wizard = session["wizard"]
+            if wizard["kind"] != "create" and wizard.get("field") == "name":
+                session.pop("wizard", None)
+                self.store.save_session(user, session)
+                raise ValueError("Смена названия проекта отключена")
             if action is not None and action not in self.input_buttons(wizard):
                 self.ask(user, wizard)
                 return True
@@ -242,3 +280,9 @@ class ProjectMenus:
         self.store.save_session(user, session)
         self.ask(user, session["wizard"])
         return True
+
+    def show_delete(self, user, project, confirmation):
+        self.managed(user, project["id"])
+        self.vk.send(user, f"Удалить проект «{project['name']}» из бота? Участники потеряют доступ. Файлы на Google Диске и данные таблицы останутся.", [
+            ("Да, удалить проект", {"a": "project_delete_confirm", "p": project["id"], "token": confirmation["token"], "_color": "negative"}),
+            ("Отмена", {"a": "settings"})])

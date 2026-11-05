@@ -47,7 +47,7 @@ def test_create_and_restart_without_config_json(tmp_path):
     assert restored.store.projects()[project["id"]] == project
 
 
-@pytest.mark.parametrize("field,value", [("name", "Новое имя"), ("concept", "Новая концепция"),
+@pytest.mark.parametrize("field,value", [("concept", "Новая концепция"),
                                         ("prompt", "Новый промпт"), ("worksheet", "Новая вкладка"),
                                         ("date_column", "Дата публикации"), ("weekday_column", "День"),
                                         ("link_column", "Материалы"), ("timezone", "Asia/Yekaterinburg")])
@@ -160,7 +160,8 @@ def test_all_fields_reachable_and_keyboards_fit_vk(tmp_path, project):
         chat.send("settings", page=page)
         buttons = bot.vk.messages[-1][1]
         assert len(buttons) <= 10
-        reached.update(p["field"] for _, p in buttons if p["a"] == "project_edit")
+        rows = [item if isinstance(item, list) else [item] for item in buttons]
+        reached.update(p["field"] for row in rows for _, p in row if p["a"] == "project_edit")
     assert reached == {field[0] for field in FIELDS}
 
 

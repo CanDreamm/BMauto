@@ -101,7 +101,7 @@ def test_settings_contain_fields_and_members_without_nested_settings_button(tmp_
     chat = Conversation(bot)
     chat.send("project", p="test")
     chat.send("settings")
-    assert actions(bot) == {"project_edit", "settings", "members", "google_connect", "project_home"}
+    assert actions(bot) == {"project_edit", "settings", "members", "google_connect", "project_home", "project_delete"}
     labels = [b["action"]["label"] for row in serialized(bot) for b in row]
     assert "Участники" in labels
     assert "Настройки" not in labels and "Настройки проекта" not in labels

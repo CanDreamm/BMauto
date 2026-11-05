@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 
@@ -87,11 +87,14 @@ class Store:
                 self.db.execute("INSERT OR IGNORE INTO projects VALUES (?,?)", (project["id"], json.dumps(project)))
 
     def projects(self):
-        return {key: json.loads(body) for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")}
+        return {key: project for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")
+                if not (project := json.loads(body)).get("deleted_at")}
 
     def save_project(self, project, expected_revision=None, owner=None):
         with self.db:
             row = self.db.execute("SELECT body FROM projects WHERE id=?", (project["id"],)).fetchone()
+            if row and json.loads(row[0]).get("deleted_at"):
+                raise ValueError("Проект удалён")
             current_revision = json.loads(row[0]).get("revision", 1) if row else None
             if current_revision != expected_revision:
                 raise ValueError("Настройки проекта изменились. Откройте настройки заново")
@@ -100,6 +103,26 @@ class Store:
             if current_revision is None and owner is not None:
                 self.db.execute("INSERT INTO project_members VALUES (?,?,'owner')", (project["id"], owner))
         return updated
+
+    def delete_project(self, project_id, actor, admins, expected_revision):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            if not self.can_manage(project_id, actor, admins):
+                raise ValueError("Удалить проект может только владелец или администратор")
+            project = self.projects()[project_id]
+            if project.get("revision", 1) != expected_revision:
+                raise ValueError("Проект изменился. Подтвердите удаление заново")
+            archived = {**project, "deleted_at": datetime.now(timezone.utc).isoformat(),
+                        "deleted_by": actor, "revision": expected_revision + 1}
+            # Keep a tombstone so legacy config cannot recreate the deleted project.
+            self.db.execute("UPDATE projects SET body=? WHERE id=?", (json.dumps(archived), project_id))
+            self.db.execute("DELETE FROM project_members WHERE project_id=?", (project_id,))
+            for user, body in self.db.execute("SELECT user,body FROM sessions").fetchall():
+                session = json.loads(body)
+                if session.get("project") == project_id:
+                    clean = {"last_message": session.get("last_message", -1), "view": "projects"}
+                    self.db.execute("UPDATE sessions SET body=? WHERE user=?", (json.dumps(clean), user))
+        return project
 
     def ensure_owners(self, default_owner):
         if default_owner is None:

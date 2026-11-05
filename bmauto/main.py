@@ -37,7 +37,7 @@ class Bot:
         if not self.store.can_access(project["id"], user, self.allowed):
             raise ValueError("Нет доступа к проекту")
         session = self.store.session(user)
-        for key in ("wizard", "task", "member_input", "member_remove", "dates_error"):
+        for key in ("wizard", "task", "member_input", "member_remove", "dates_error", "delete_confirmation"):
             session.pop(key, None)
         session.update(project=project["id"], view="dates", mode=None, page=0,
                        project_revision=project.get("revision", 1), tasks=[])
@@ -101,6 +101,14 @@ class Bot:
             session.pop("wizard", None)
             session["view"] = "home" if project else "projects"
             self.store.save_session(user, session)
+        if project and session.get("view") == "project_delete" and session.get("delete_confirmation"):
+            if self.store.can_manage(project["id"], user, self.allowed):
+                self.project_menus.show_delete(user, project, session["delete_confirmation"])
+            else:
+                session.pop("delete_confirmation", None)
+                self.store.save_session(user, session)
+                self.project_menus.show_home(user, project)
+            return
         if session.get("view") in {"members", "member_add", "member_remove"} and project:
             if self.store.can_manage(project["id"], user, self.allowed):
                 if session.get("member_input"):
@@ -167,6 +175,7 @@ class Bot:
             self.store.save_session(user, session)
             raise ValueError("Нет доступа к проекту")
         if action in {"projects", "project_page", "project", "project_new", "project_home", "project_cancel", "settings", "project_edit", "dates"}:
+            session.pop("delete_confirmation", None)
             session.pop("member_input", None)
             session.pop("member_remove", None)
         if self.member_menus.handle(user, action, payload, text, session):
