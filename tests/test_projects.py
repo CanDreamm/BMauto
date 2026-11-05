@@ -261,6 +261,9 @@ def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
     assert actions(bot) == {"preview", "publish", "project_home"}
     draft["published"] = True
     bot.store.save_draft(key, draft)
+    session = bot.store.session(1)
+    session["task"]["material_url"] = "https://drive.google.com/drive/folders/folder"
+    bot.store.save_session(1, session)
     chat.send("task_home")
     assert actions(bot) == {"preview", "project_home"}
 

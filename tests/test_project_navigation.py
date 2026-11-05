@@ -30,8 +30,8 @@ def payload(button):
 
 def many_dates(google, count):
     start = date(3000, 1, 2)
-    google.table = [["План публикаций"], ["Дата", "День недели", "Задание", "Ссылка"]] + [
-        [(start + timedelta(days=i)).strftime("%d.%m.%Y"), "Среда", f"Задание {i}", ""]
+    google.table = [["План публикаций"], ["Неделя", "Дата", "День недели", "Задание", "Ссылка"]] + [
+        ["45", (start + timedelta(days=i)).strftime("%d.%m.%Y"), "Среда", f"Задание {i}", ""]
         for i in range(count)
     ]
 

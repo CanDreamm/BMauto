@@ -4,7 +4,7 @@ import re
 import httpx
 import pytest
 
-from bmauto.core import Store
+from bmauto.core import Store, append_materials
 from bmauto.google import Google, publish
 from test_projects import Conversation, actions, bot_at
 from test_workflow import FakeGoogle, task
@@ -127,7 +127,7 @@ def test_publication_always_shares_and_ignores_old_parent_setting(tmp_path, proj
     final = store.draft("draft")
     assert final["parent"] == "project-parent"
     assert google.shared == [final["folder"]]
-    assert google.table[2][3] == url
+    assert google.table[2][3] == append_materials("Текст", url)
 
 
 def test_settings_only_show_essential_fields_without_pages(tmp_path, project):

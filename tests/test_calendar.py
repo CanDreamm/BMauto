@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from bmauto.calendar import load_tasks
-from bmauto.core import Store
+from bmauto.core import Store, append_materials
 from bmauto.google import Google, publish
 from bmauto.main import Bot
 from bmauto.projects import validate_field
@@ -13,13 +13,13 @@ from test_projects import Conversation
 from test_workflow import FakeGoogle, FakeLLM, FakeVK
 
 
-HEADERS = ["Дата", "День недели", "Задание", "Ссылка"]
+HEADERS = ["Неделя", "Дата", "День недели", "Задание", "Ссылка"]
 
 
 class MonthlyGoogle(FakeGoogle):
     def __init__(self, tables):
         super().__init__()
-        self.tables = {sheet_id: [["План публикаций"], list(HEADERS)] + [[day, "Среда", "Текст", ""] for day in days]
+        self.tables = {sheet_id: [["План публикаций"], list(HEADERS)] + [["45", day, "Среда", "Текст", ""] for day in days]
                        for sheet_id, _, days in tables}
         self.sheets = [{"sheetId": sheet_id, "title": title} for sheet_id, title, _ in tables]
         self.reads, self.writes = [], []
@@ -34,7 +34,7 @@ class MonthlyGoogle(FakeGoogle):
 
     def set_link(self, project, row, headers, url):
         self.writes.append((project["_sheet_id"], row, url))
-        self.tables[project["_sheet_id"]][row - 1][3] = url
+        self.tables[project["_sheet_id"]][row - 1][3] = append_materials(self.tables[project["_sheet_id"]][row - 1][3], url)
 
 
 @pytest.fixture
@@ -117,8 +117,8 @@ def test_publish_uses_original_sheet_id_after_rename(tmp_path, monthly_project):
     store.save_draft("december", draft)
     url = publish(google, store, "december", monthly_project, task)
     assert google.writes == [(1, 3, url)]
-    assert google.tables[0][2][3] == ""
-    assert google.tables[1][2][3] == url
+    assert google.tables[0][2][3] == "Текст"
+    assert google.tables[1][2][3] == append_materials("Текст", url)
 
 
 def test_two_months_with_same_row_number_have_separate_shared_drafts(tmp_path, monthly_project, monkeypatch):
@@ -150,7 +150,7 @@ def test_google_sheet_id_reads_and_writes_survive_title_changes(monthly_project)
     def handle(request):
         seen.append(request)
         if "batchGetByDataFilter" in request.url.path:
-            return httpx.Response(200, json={"valueRanges": [{"valueRange": {"values": [HEADERS]}}]})
+            return httpx.Response(200, json={"valueRanges": [{"valueRange": {"values": [["План"], HEADERS, [], [], ["45", "06.11.2026", "Пятница", "Текст", ""]]}}]})
         return httpx.Response(200, json={})
     class Credentials:
         valid = True
@@ -159,12 +159,12 @@ def test_google_sheet_id_reads_and_writes_survive_title_changes(monthly_project)
     google.credentials = Credentials()
     google.http = httpx.Client(transport=httpx.MockTransport(handle))
     source = {**monthly_project, "_sheet_id": 0}
-    assert google.rows(source) == [HEADERS]
-    google.set_link(source, 5, HEADERS, "https://example.test/folder")
+    assert google.rows(source)[1] == HEADERS
+    google.set_link(source, 5, HEADERS, "https://drive.google.com/drive/folders/example")
     assert json.loads(seen[0].content)["dataFilters"] == [{"gridRange": {"sheetId": 0}}]
-    update = json.loads(seen[1].content)["requests"][0]["updateCells"]
+    update = json.loads(seen[-1].content)["requests"][0]["updateCells"]
     assert update["range"] == {"sheetId": 0, "startRowIndex": 4, "endRowIndex": 5, "startColumnIndex": 3, "endColumnIndex": 4}
-    assert update["rows"][0]["values"][0]["userEnteredValue"]["stringValue"] == "https://example.test/folder"
+    assert update["rows"][0]["values"][0]["userEnteredValue"]["stringValue"] == append_materials("Текст", "https://drive.google.com/drive/folders/example")
 
 
 @pytest.mark.parametrize("value", ["-1", "32", "три", True])

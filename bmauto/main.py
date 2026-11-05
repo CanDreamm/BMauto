@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from .core import DEFAULT_COLUMNS, Store
+from .core import DEFAULT_COLUMNS, Store, assignment_from_task, task_context
 from .calendar import load_tasks
 from .google import publish
 from .llm import GenAPI
@@ -63,8 +63,18 @@ class Bot:
             parts.append([task["source_spreadsheet_id"], task["sheet_id"]])
         if project.get("draft_scope"):
             parts.append(project["draft_scope"])
+        legacy_key = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+        parts[2] = {"date": task["day"], "assignment_D": assignment_from_task(task)}
         key = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+        if not self.store.has_draft(key) and self.store.has_draft(legacy_key):
+            self.store.save_draft(key, self.store.draft(legacy_key))
         return key, self.store.draft(key)
+
+    def task_display(self, task):
+        message = task_context(task)
+        if task.get("material_url"):
+            message += "\n\nГотовые материалы:\n" + task["material_url"]
+        return message
 
     def task_buttons(self, session, project):
         _, draft = self.draft_for(session, project)
@@ -81,8 +91,9 @@ class Bot:
                 buttons.append(("Загрузить фотографии", {"a": "photos"}))
         if draft["text"] or draft["photos"]:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
-        if draft["text"].strip() and not draft["published"]:
-            buttons.append(("Повторить отправку" if draft["folder"] else "Отправить в таблицу", {"a": "publish"}))
+        if draft["text"].strip() and (not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
+            label = "Добавить ссылку под заданием" if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
+            buttons.append((label, {"a": "publish"}))
         return buttons + [("К датам проекта", {"a": "project_home"})]
 
     def render(self, user, session=None, notice=None):
@@ -215,7 +226,7 @@ class Bot:
             session["task"], session["mode"] = task, None
             session["view"] = "task"
             self.store.save_session(user, session)
-            self.vk.send(user, "\n".join(f"{k}: {v}" for k, v in task["fields"].items() if v.strip()), self.task_buttons(session, project))
+            self.vk.send(user, self.task_display(task), self.task_buttons(session, project))
             return
         if "task" not in session:
             raise ValueError("Выберите дату кнопкой")
@@ -224,7 +235,7 @@ class Bot:
         if action == "task_home":
             session["mode"], session["view"] = None, "task"
             self.store.save_session(user, session)
-            self.vk.send(user, "\n".join(f"{k}: {v}" for k, v in task["fields"].items() if v.strip()), self.task_buttons(session, project))
+            self.vk.send(user, self.task_display(task), self.task_buttons(session, project))
             return
         if action is not None and action not in {p["a"] for _, p in self.task_buttons(session, project)}:
             self.render(user, notice="Это действие сейчас недоступно. Выберите кнопку текущего меню")
@@ -235,7 +246,9 @@ class Bot:
         if action == "publish":
             self.vk.send(user, "Сохраняю материалы на Google Диск…")
             url = publish(self.google_for(project), self.store, key, project, task)
-            self.vk.send(user, "Готово. Ссылка записана в таблицу:\n" + url, self.task_buttons(session, project))
+            session["task"]["material_url"] = url
+            self.store.save_session(user, session)
+            self.vk.send(user, "Готово. Ссылка записана под описанием в D:\n" + url, self.task_buttons(session, project))
             return
         if draft["folder"]:
             raise ValueError("Выгрузка уже начата: материалы зафиксированы. Можно повторить отправку в таблицу")
@@ -260,7 +273,7 @@ class Bot:
         if session.get("mode") == "supplement" and (not action or action == "no_supplement"):
             if not text and action != "no_supplement":
                 raise ValueError("Напишите дополнение текстом")
-            description = "\n".join(f"{k}: {v}" for k, v in task["fields"].items() if v.strip() and k != project.get("link_column", DEFAULT_COLUMNS["link_column"]))
+            description = task_context(task)
             self.vk.send(user, "Генерирую текст…")
             draft["text"] = self.llm.generate(project, description, "" if action == "no_supplement" else text)
             self.store.save_draft(key, draft)

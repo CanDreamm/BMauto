@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -6,6 +7,34 @@ from pathlib import Path
 
 DEFAULT_COLUMNS = {"date_column": "Дата", "weekday_column": "День недели", "link_column": "Ссылка"}
 HEADER_ROW = 2
+MATERIALS_MARKER = "Готовые материалы:"
+MATERIALS_FOOTER = re.compile(r"(?s)^(?:(.*)\n\n)?Готовые материалы:\n(https://drive\.google\.com/drive/folders/[A-Za-z0-9_-]+)\s*$")
+
+
+def assignment_cell(value):
+    value = str(value) if value is not None else ""
+    match = MATERIALS_FOOTER.fullmatch(value)
+    return (match[1] or "", match[2]) if match else (value, None)
+
+
+def assignment_from_task(task):
+    if task.get("assignment") is not None:
+        return task["assignment"]
+    values = list(task["fields"].values())
+    return assignment_cell(values[3] if len(values) > 3 else "")[0]
+
+
+def task_context(task):
+    return f"Дата: {task['day']}\nДень недели: {task['weekday']}\nЗадание: {assignment_from_task(task)}"
+
+
+def append_materials(value, url):
+    description, existing = assignment_cell(value)
+    if existing:
+        if existing != url:
+            raise ValueError("У задания уже есть другая ссылка; перезапись запрещена")
+        return value
+    return f"{description}\n\n{MATERIALS_MARKER}\n{url}" if description else f"{MATERIALS_MARKER}\n{url}"
 
 
 @dataclass
@@ -15,9 +44,11 @@ class Task:
     weekday: str
     fields: dict[str, str]
     header_row: int = HEADER_ROW
+    assignment: str | None = None
+    material_url: str | None = None
 
     def description(self):
-        return "\n".join(f"{key}: {value}" for key, value in self.fields.items() if value.strip())
+        return task_context({"day": self.day.isoformat(), "weekday": self.weekday, "fields": self.fields, "assignment": self.assignment})
 
 
 def parse_date(value):
@@ -66,7 +97,10 @@ def tasks_from_rows(rows, project, today):
         except ValueError as exc:
             raise ValueError(f"Строка {number}: {exc}") from exc
         if day > today:
-            result.append(Task(number, day, fields[project["weekday_column"]], fields, header_row))
+            if len(headers) < 4:
+                raise ValueError("Задание должно находиться в столбце D")
+            description, material_url = assignment_cell(row[3] if len(row) > 3 else "")
+            result.append(Task(number, day, fields[project["weekday_column"]], fields, header_row, description, material_url))
     return sorted(result, key=lambda t: (t.day, t.row))
 
 
@@ -208,6 +242,9 @@ class Store:
     def save_draft(self, key, value):
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO drafts VALUES (?,?)", (key, json.dumps(value)))
+
+    def has_draft(self, key):
+        return self.db.execute("SELECT 1 FROM drafts WHERE key=?", (key,)).fetchone() is not None
 
     def drive_location(self, account, parent, location):
         row = self.db.execute("SELECT file_id,ready FROM drive_locations WHERE account=? AND parent=? AND location=?", (account, parent, location)).fetchone()

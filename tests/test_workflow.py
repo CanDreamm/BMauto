@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import pytest
 from docx import Document
 
-from bmauto.core import Store, column_letter, tasks_from_rows
+from bmauto.core import Store, append_materials, column_letter, tasks_from_rows
 from bmauto.google import publish, word_document
 from bmauto.main import Bot
 
@@ -14,7 +14,7 @@ class FakeGoogle:
         from bmauto.main import datetime
         from zoneinfo import ZoneInfo
         day = datetime.now(ZoneInfo("Europe/Moscow")).date() + timedelta(days=1)
-        self.table = [["План публикаций"], ["Дата", "День недели", "Задание", "Ссылка"], [day.strftime("%d.%m.%Y"), "Пятница", "Текст", ""]]
+        self.table = [["План публикаций"], ["Неделя", "Дата", "День недели", "Задание", "Ссылка"], ["45", day.strftime("%d.%m.%Y"), "Пятница", "Текст", ""]]
         self.files = {}
         self.created = []
         self.shared = []
@@ -57,7 +57,7 @@ class FakeGoogle:
     def set_link(self, project, row, headers, url):
         if self.fail_link:
             raise RuntimeError("temporary Sheets failure")
-        self.table[row - 1][3] = url
+        self.table[row - 1][3] = append_materials(self.table[row - 1][3], url)
 
 
 def task(google, project):
@@ -113,8 +113,8 @@ def test_publish_retry_does_not_duplicate_files(tmp_path, project):
     url = publish(google, Store(tmp_path), "key", project, chosen)
     assert publish(google, store, "key", project, chosen) == url
     assert google.created == ["publication.docx", "photo_01.jpg"]
-    assert google.table[2][3] == url
-    assert google.table[:2] == [["План публикаций"], ["Дата", "День недели", "Задание", "Ссылка"]]
+    assert google.table[2][3] == append_materials("Текст", url)
+    assert google.table[:2] == [["План публикаций"], ["Неделя", "Дата", "День недели", "Задание", "Ссылка"]]
     assert google.shared
 
 
@@ -124,7 +124,7 @@ def test_changed_task_not_published(tmp_path, project):
     draft = store.draft("key")
     draft["text"] = "Text"
     store.save_draft("key", draft)
-    google.table[2][2] = "Changed"
+    google.table[2][3] = "Changed"
     with pytest.raises(ValueError, match="изменилось"):
         publish(google, store, "key", project, chosen)
     assert not google.files
@@ -136,7 +136,7 @@ def test_existing_link_not_overwritten(tmp_path, project):
     draft = store.draft("key")
     draft["text"] = "Text"
     store.save_draft("key", draft)
-    google.table[2][3] = "https://existing.example"
+    google.table[2][3] = append_materials("Текст", "https://drive.google.com/drive/folders/other")
     with pytest.raises(ValueError, match="перезапись"):
         publish(google, store, "key", project, chosen)
 
@@ -187,7 +187,7 @@ def test_vk_full_flow_and_photo_limit(tmp_path, project):
     assert "9/9" in vk.messages[-1][0]
     send("done")
     send("publish")
-    assert "Ссылка записана" in vk.messages[-1][0]
+    assert "Ссылка записана под описанием в D" in vk.messages[-1][0]
     assert len(google.created) == 10
     bot.handle(dict(id=counter, from_id=1, peer_id=1))  # Duplicate VK delivery.
     assert len(google.created) == 10
@@ -217,15 +217,15 @@ def test_google_uses_sheets_host_and_escaped_tab(project):
 
     def respond(request):
         requests.append(request)
-        return httpx.Response(200, json={"values": [["Дата"]]})
+        return httpx.Response(200, json={"values": [["План"], ["Неделя", "Дата", "День недели", "Задание"], ["45", "06.11.2026", "Пятница", "Текст"]]})
 
     google = Google.__new__(Google)
     google.credentials = Credentials()
     google.http = httpx.Client(transport=httpx.MockTransport(respond))
     project["worksheet"] = "План 'осень'"
     google.rows(project)
-    google.set_link(project, 2, ["Дата", "Ссылка"], "https://example.test/folder")
+    google.set_link(project, 3, ["Неделя", "Дата", "День недели", "Задание"], "https://drive.google.com/drive/folders/example")
     assert all(r.url.host == "sheets.googleapis.com" for r in requests)
     assert requests[0].url.path.endswith("/'План ''осень'''" )
-    assert requests[1].url.path.endswith("!B2")
-    assert requests[1].url.params["valueInputOption"] == "RAW"
+    assert requests[-1].url.path.endswith("!D3")
+    assert requests[-1].url.params["valueInputOption"] == "RAW"

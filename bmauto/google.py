@@ -6,7 +6,7 @@ import httpx
 from docx import Document
 from google.auth.transport.requests import Request
 
-from .core import DEFAULT_COLUMNS, column_letter, table_headers, table_layout
+from .core import DEFAULT_COLUMNS, append_materials, assignment_cell, assignment_from_task, table_layout
 
 SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
 
@@ -43,62 +43,37 @@ class Google:
 
     def set_link(self, project, row, headers, url):
         project = {**DEFAULT_COLUMNS, **project}
-        if project["link_column"] not in headers:
-            self.add_link_column(project, row, url)
+        rows = self.rows(project)
+        header_row, current_headers = table_layout(rows, project)
+        if row <= header_row or row > len(rows) or len(current_headers) < 4:
+            raise ValueError("Строка задания изменилась. Откройте дату заново")
+        values = rows[row - 1]
+        fields = dict(zip(current_headers, list(values) + [""] * len(current_headers)))
+        expected = project.get("_expected_fields", {})
+        for key in (project["date_column"], project["weekday_column"]):
+            if key in expected and fields.get(key, "") != expected[key]:
+                raise ValueError("Дата задания изменилась во время отправки. Откройте дату заново")
+        original = str(values[3]) if len(values) > 3 else ""
+        description, _ = assignment_cell(original)
+        if "_expected_assignment" in project and description != project["_expected_assignment"]:
+            raise ValueError("Задание в D изменилось во время отправки. Откройте дату заново")
+        updated = append_materials(original, url)
+        if updated == original:
             return
         if "_sheet_id" in project:
-            column = headers.index(project["link_column"])
             self.request("POST", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}:batchUpdate", json={"requests": [{"updateCells": {
                 "range": {"sheetId": project["_sheet_id"], "startRowIndex": row - 1, "endRowIndex": row,
-                          "startColumnIndex": column, "endColumnIndex": column + 1},
-                "rows": [{"values": [{"userEnteredValue": {"stringValue": url}}]}], "fields": "userEnteredValue"}}]})
+                          "startColumnIndex": 3, "endColumnIndex": 4},
+                "rows": [{"values": [{"userEnteredValue": {"stringValue": updated}}]}], "fields": "userEnteredValue"}}]})
             return
-        column = column_letter(headers.index(project["link_column"]) + 1)
         sheet = "'" + project["worksheet"].replace("'", "''") + "'"
-        cell = quote(f"{sheet}!{column}{row}", safe="")
+        cell = quote(f"{sheet}!D{row}", safe="")
         self.request("PUT", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}/values/{cell}",
-                     params={"valueInputOption": "RAW"}, json={"values": [[url]]})
+                     params={"valueInputOption": "RAW"}, json={"values": [[updated]]})
 
     def worksheets(self, project):
-        result = self.request("GET", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}", params={"fields": "sheets(properties(sheetId,title,gridProperties(columnCount)))"})
+        result = self.request("GET", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}", params={"fields": "sheets(properties(sheetId,title))"})
         return [sheet["properties"] for sheet in result.get("sheets", [])]
-
-    def add_link_column(self, project, row, url):
-        # Re-read after uploads: another operator may have created the column already.
-        rows = self.rows(project)
-        header_row, headers = table_layout(rows, project)
-        link_name = project["link_column"]
-        column = headers.index(link_name) if link_name in headers else len(headers)
-        current = rows[row - 1] if row <= len(rows) else []
-        if row <= header_row or not current:
-            raise ValueError("Строка задания изменилась. Откройте дату заново")
-        fields = dict(zip(headers, list(current) + [""] * len(headers)))
-        if any(fields.get(k, "") != value for k, value in project.get("_expected_fields", {}).items() if k != link_name):
-            raise ValueError("Задание изменилось во время отправки. Откройте дату заново")
-        existing = str(current[column]).strip() if column < len(current) else ""
-        if existing and existing != url:
-            raise ValueError("В этой строке уже есть другая ссылка; перезапись запрещена")
-        sheets = self.worksheets(project)
-        matches = [s for s in sheets if s["sheetId"] == project["_sheet_id"]] if "_sheet_id" in project else [s for s in sheets if s["title"] == project["worksheet"]]
-        if len(matches) != 1:
-            raise ValueError("Исходная вкладка задания не найдена")
-        sheet = matches[0]
-        requests = []
-        def cell(row_index, value):
-            return {"updateCells": {"range": {"sheetId": sheet["sheetId"], "startRowIndex": row_index, "endRowIndex": row_index + 1,
-                                             "startColumnIndex": column, "endColumnIndex": column + 1},
-                                    "rows": [{"values": [{"userEnteredValue": {"stringValue": value}}]}], "fields": "userEnteredValue"}}
-        if link_name not in headers:
-            if any(str(value).strip() for values in rows[header_row - 1:] for value in values[column:]):
-                raise ValueError("Справа от заголовков есть данные без названия столбца. Добавьте отдельный столбец «Ссылка»")
-            width = sheet.get("gridProperties", {}).get("columnCount")
-            if not isinstance(width, int) or width < 1:
-                raise ValueError("Не удалось определить ширину вкладки")
-            if column >= width:
-                requests.append({"appendDimension": {"sheetId": sheet["sheetId"], "dimension": "COLUMNS", "length": column + 1 - width}})
-            requests.append(cell(header_row - 1, link_name))
-        requests.append(cell(row - 1, url))
-        self.request("POST", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}:batchUpdate", json={"requests": requests})
 
     def new_id(self):
         return self.request("GET", "drive/v3/files/generateIds", params={"count": 1})["ids"][0]
@@ -202,18 +177,24 @@ def publish(google, store, key, project, task):
     rows = google.rows(project)
     if not rows:
         raise ValueError("Исходная вкладка задания пуста. Откройте список дат заново")
-    headers = table_headers(rows, project)
+    header_row, headers = table_layout(rows, project)
     project["_expected_fields"] = task["fields"]
+    project["_expected_assignment"] = assignment_from_task(task)
     row = task["row"]
-    current = dict(zip(headers, rows[row - 1] + [""] * len(headers))) if row <= len(rows) else {}
+    if row <= header_row or row > len(rows) or len(headers) < 4:
+        raise ValueError("Строка задания изменилась. Откройте дату заново")
+    current = dict(zip(headers, rows[row - 1] + [""] * len(headers)))
     expected = task["fields"]
-    if any(current.get(k, "") != v for k, v in expected.items() if k != project["link_column"]):
+    current_description, existing = assignment_cell(rows[row - 1][3] if len(rows[row - 1]) > 3 else "")
+    if (current_description != project["_expected_assignment"] or
+        any(current.get(key, "") != expected.get(key, "") for key in (project["date_column"], project["weekday_column"]))):
         raise ValueError("Задание в таблице изменилось. Откройте список дат заново")
     url = f"https://drive.google.com/drive/folders/{draft['folder']}" if draft["folder"] else None
-    existing = current.get(project["link_column"], "").strip()
     if existing and existing != url:
-        raise ValueError("В этой строке уже есть другая ссылка; перезапись запрещена")
+        raise ValueError("У задания уже есть другая ссылка; перезапись запрещена")
     if draft["published"]:
+        google.share(draft["folder"])
+        google.set_link(project, row, headers, url)
         return url
     if not draft["folder"] or not google.exists(draft["folder"]):
         draft["parent"] = draft.get("parent") or google.project_folder(store, project)
