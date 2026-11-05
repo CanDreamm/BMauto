@@ -14,6 +14,7 @@ class Task:
     day: date
     weekday: str
     fields: dict[str, str]
+    header_row: int = HEADER_ROW
 
     def description(self):
         return "\n".join(f"{key}: {value}" for key, value in self.fields.items() if value.strip())
@@ -28,25 +29,34 @@ def parse_date(value):
     raise ValueError(f"Неподдерживаемая дата: {value}")
 
 
-def table_headers(rows):
-    if len(rows) < HEADER_ROW or not rows[HEADER_ROW - 1]:
-        raise ValueError("Вторая строка таблицы должна содержать заголовки")
-    headers = [str(x).strip() for x in rows[HEADER_ROW - 1]]
-    if len(headers) != len(set(headers)) or "" in headers:
-        raise ValueError("Заголовки таблицы должны быть непустыми и уникальными")
-    return headers
+def table_layout(rows, project=None):
+    project = {**DEFAULT_COLUMNS, **(project or {})}
+    required = {project["date_column"], project["weekday_column"]}
+    for number in (2, 3):
+        if len(rows) < number:
+            continue
+        headers = [str(x).strip() if x is not None else "" for x in rows[number - 1]]
+        while headers and not headers[-1]:
+            headers.pop()
+        if not required.issubset(headers):
+            continue
+        if len(headers) != len(set(headers)) or "" in headers:
+            raise ValueError("Заголовки таблицы должны быть непустыми и уникальными")
+        return number, headers
+    raise ValueError("Не найдены заголовки «Дата» и «День недели» во второй или третьей строке")
+
+
+def table_headers(rows, project=None):
+    return table_layout(rows, project)[1]
 
 
 def tasks_from_rows(rows, project, today):
     project = {**DEFAULT_COLUMNS, **project}
     if not rows:
         return []
-    headers = table_headers(rows)
-    required = [project[k] for k in ("date_column", "weekday_column", "link_column")]
-    if any(name not in headers for name in required):
-        raise ValueError("В таблице нет обязательных столбцов: " + ", ".join(required))
+    header_row, headers = table_layout(rows, project)
     result = []
-    for number, row in enumerate(rows[HEADER_ROW:], HEADER_ROW + 1):
+    for number, row in enumerate(rows[header_row:], header_row + 1):
         fields = dict(zip(headers, [str(x) for x in row] + [""] * (len(headers) - len(row))))
         value = fields[project["date_column"]].strip()
         if not value:
@@ -56,7 +66,7 @@ def tasks_from_rows(rows, project, today):
         except ValueError as exc:
             raise ValueError(f"Строка {number}: {exc}") from exc
         if day > today:
-            result.append(Task(number, day, fields[project["weekday_column"]], fields))
+            result.append(Task(number, day, fields[project["weekday_column"]], fields, header_row))
     return sorted(result, key=lambda t: (t.day, t.row))
 
 
