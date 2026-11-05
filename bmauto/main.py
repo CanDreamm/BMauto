@@ -76,17 +76,27 @@ class Bot:
             message += "\n\nГотовые материалы:\n" + task["material_url"]
         return message
 
+    def missing_generation_settings(self, project):
+        return [label for key, label in (("concept", "Концепция"), ("prompt", "Промпт")) if not str(project.get(key) or "").strip()]
+
+    def generation_setup_message(self, project, user):
+        missing = ", ".join(self.missing_generation_settings(project))
+        action = "Заполните их в настройках проекта" if self.store.can_manage(project["id"], user, self.allowed) else "Попросите владельца заполнить их в настройках проекта"
+        return f"Для генерации не заполнены: {missing}. {action}"
+
     def task_buttons(self, session, project):
         _, draft = self.draft_for(session, project)
         navigation = [("К заданию", {"a": "task_home"}), ("Меню проекта", {"a": "project_home"})]
+        missing = self.missing_generation_settings(project)
+        if missing:
+            navigation.insert(0, ("Настройки проекта", {"a": "settings"}))
         if session.get("mode") == "supplement":
             return [("Без дополнений", {"a": "no_supplement"})] + navigation
         if session.get("mode") == "photos":
             return [("Готово", {"a": "done"})] + navigation
         buttons = []
         if not draft["folder"]:
-            if project.get("concept") and project.get("prompt"):
-                buttons.append(("Сгенерировать текст", {"a": "generate"}))
+            buttons.append(("Сгенерировать текст", {"a": "generate"}))
             if len(draft["photos"]) < 9:
                 buttons.append(("Загрузить фотографии", {"a": "photos"}))
         if draft["text"] or draft["photos"]:
@@ -94,6 +104,8 @@ class Bot:
         if draft["text"].strip() and (not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
             label = "Добавить ссылку под заданием" if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
             buttons.append((label, {"a": "publish"}))
+        if missing:
+            buttons.append(("Настройки проекта", {"a": "settings"}))
         return buttons + [("К датам проекта", {"a": "project_home"})]
 
     def render(self, user, session=None, notice=None):
@@ -253,6 +265,9 @@ class Bot:
         if draft["folder"]:
             raise ValueError("Выгрузка уже начата: материалы зафиксированы. Можно повторить отправку в таблицу")
         if action == "generate":
+            if self.missing_generation_settings(project):
+                self.vk.send(user, self.generation_setup_message(project, user), self.task_buttons(session, project))
+                return
             session["mode"] = "supplement"
             session["view"] = "supplement"
             self.store.save_session(user, session)
@@ -271,6 +286,8 @@ class Bot:
             self.vk.send(user, f"Черновик сохранён. Фото: {len(draft['photos'])}/9", self.task_buttons(session, project))
             return
         if session.get("mode") == "supplement" and (not action or action == "no_supplement"):
+            if self.missing_generation_settings(project):
+                raise ValueError(self.generation_setup_message(project, user))
             if not text and action != "no_supplement":
                 raise ValueError("Напишите дополнение текстом")
             description = task_context(task)

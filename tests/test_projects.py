@@ -280,14 +280,19 @@ def test_stale_action_cannot_publish_without_text(tmp_path, project):
     assert any("недоступно" in text for text, _ in bot.vk.messages)
 
 
-def test_missing_generation_settings_hide_button(tmp_path, project):
+def test_missing_generation_settings_keep_button_and_explain_setup(tmp_path, project):
     project.pop("prompt")
     bot = bot_at(tmp_path, {"projects": [project]})
     chat = Conversation(bot)
     chat.send("project", p="test")
     chat.send("dates")
     chat.send("task", i=0)
-    assert "generate" not in actions(bot)
+    assert "generate" in actions(bot) and "settings" in actions(bot)
+    chat.send("generate")
+    assert "Промпт" in bot.vk.messages[-1][0]
+    assert "настройках проекта" in bot.vk.messages[-1][0]
+    assert bot.store.session(1)["mode"] is None
+    assert "generate" in actions(bot)
 
 
 def test_remove_only_untouched_demo_and_prevent_reimport(tmp_path, project):
