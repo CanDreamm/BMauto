@@ -15,7 +15,7 @@ from .members import MemberMenus
 from .oauth import GoogleMenus, ProjectGoogle
 from .oauth_server import connections_from_env
 from .projects import ProjectMenus
-from .vk import VK
+from .vk import VK, photo_format
 
 
 class Bot:
@@ -91,18 +91,22 @@ class Bot:
         if missing:
             navigation.insert(0, ("Настройки проекта", {"a": "settings"}))
         send_button = None
-        if (draft["text"].strip() or draft["photos"]) and (not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
-            label = "Добавить ссылку под заданием" if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
+        if (draft["text"].strip() or draft["photos"]) and (draft.get("dirty") or not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
+            label = ("Сохранить изменения" if draft.get("dirty") else "Добавить ссылку под заданием") if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
             send_button = (label, {"a": "publish"})
         if session.get("mode") == "supplement":
             return [("Без дополнений", {"a": "no_supplement"})] + navigation
+        if session.get("mode") == "text":
+            return navigation
         if session.get("mode") == "photos":
-            return ([send_button] if send_button else []) + [("Готово", {"a": "done"})] + navigation
-        buttons = []
-        if not draft["folder"]:
-            buttons.append(("Сгенерировать текст", {"a": "generate"}))
-            if len(draft["photos"]) < 9:
-                buttons.append(("Загрузить фотографии", {"a": "photos"}))
+            remove = [(f"Удалить фото {i}", {"a": "remove_photo", "id": photo["id"]}) for i, photo in enumerate(draft["photos"], 1)]
+            rows = [remove[i:i + 3] for i in range(0, len(remove), 3)]
+            if remove:
+                rows.append(("Убрать все фото", {"a": "clear_photos"}))
+            return ([send_button] if send_button else []) + rows + [("Готово", {"a": "done"})] + navigation
+        buttons = [("Сгенерировать текст", {"a": "generate"}),
+                   ("Редактировать текст" if draft["text"] else "Написать текст", {"a": "edit_text"}),
+                   ("Фотографии" if draft["photos"] else "Загрузить фотографии", {"a": "photos"})]
         if draft["text"] or draft["photos"]:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
         if send_button:
@@ -147,7 +151,7 @@ class Bot:
             self.store.save_session(user, session)
             self.project_menus.show_home(user, project)
             return
-        if project and session.get("view") in {"task", "supplement", "photos", "dates"} and session.get("project_revision") != project.get("revision", 1):
+        if project and session.get("view") in {"task", "supplement", "photos", "text", "dates"} and session.get("project_revision") != project.get("revision", 1):
             for key in ("tasks", "task", "mode"):
                 session.pop(key, None)
             self.store.save_session(user, session)
@@ -159,7 +163,7 @@ class Bot:
             self.project_menus.show_projects(user)
         elif session.get("view") == "settings":
             self.project_menus.show_settings(user, project, session.get("settings_page", 0))
-        elif "task" in session and session.get("view") in {"task", "supplement", "photos"}:
+        elif "task" in session and session.get("view") in {"task", "supplement", "photos", "text"}:
             self.vk.send(user, "Выберите действие для задания", self.task_buttons(session, project))
         elif session.get("view") == "dates" and "tasks" in session:
             self.show_dates(user, session)
@@ -175,12 +179,19 @@ class Bot:
                 self.vk.send(user, "У вас нет доступных проектов. Обратитесь к владельцу", [])
             return
         session = self.store.session(user)
-        if message["id"] <= session.get("last_message", -1):
+        if message.get("conversation_message_id"):
+            event = "conversation:" + str(message["conversation_message_id"])
+        elif message.get("id", 0) > 0:
+            event = "id:" + str(message["id"])
+        else:
+            event = "content:" + hashlib.sha256(json.dumps(message, sort_keys=True).encode()).hexdigest()
+        if self.store.message_handled(user, event):
             return
-        session["last_message"] = message["id"]
+        session["last_message"] = max(message.get("id", 0), session.get("last_message", -1))
         self.store.save_session(user, session)
         try:
-            self.dispatch(user, message, session)
+            if self.dispatch(user, message, session) is not False:
+                self.store.mark_message_handled(user, event)
         except ValueError as exc:
             self.render(user, notice=str(exc))
         except Exception:
@@ -252,7 +263,8 @@ class Bot:
             self.store.save_session(user, session)
             self.vk.send(user, self.task_display(task), self.task_buttons(session, project))
             return
-        if action is not None and action not in {p["a"] for _, p in self.task_buttons(session, project)}:
+        buttons = self.task_buttons(session, project)
+        if action is not None and action not in {p["a"] for item in buttons for _, p in (item if isinstance(item, list) else [item])}:
             self.render(user, notice="Это действие сейчас недоступно. Выберите кнопку текущего меню")
             return
         if action == "preview":
@@ -267,8 +279,26 @@ class Bot:
             self.store.save_session(user, session)
             self.vk.send(user, "Готово. Ссылка записана под описанием в D:\n" + url, self.task_buttons(session, project))
             return
-        if draft["folder"]:
-            raise ValueError("Выгрузка уже начата: материалы зафиксированы. Можно повторить отправку в таблицу")
+        if action == "edit_text":
+            session["mode"], session["view"] = "text", "text"
+            self.store.save_session(user, session)
+            self.vk.send(user, "Отправьте новый текст целиком. Он заменит текст черновика.\n\n" + draft["text"], self.task_buttons(session, project))
+            return
+        if session.get("mode") == "text" and not action:
+            if not text:
+                raise ValueError("Отправьте текст публикации")
+            draft["text"], draft["dirty"] = text, True
+            self.store.save_draft(key, draft)
+            session["mode"], session["view"] = None, "task"
+            self.store.save_session(user, session)
+            self.vk.send(user, "Текст черновика обновлён. Для обновления папки нажмите кнопку сохранения.", self.task_buttons(session, project))
+            return
+        if action in {"remove_photo", "clear_photos"}:
+            draft["photos"] = [photo for photo in draft["photos"] if action != "clear_photos" and photo["id"] != payload.get("id")]
+            draft["dirty"] = True
+            self.store.save_draft(key, draft)
+            self.vk.send(user, f"В черновике {len(draft['photos'])}/9 фото. Можно прикрепить новые.", self.task_buttons(session, project))
+            return
         if action == "generate":
             if self.missing_generation_settings(project):
                 self.vk.send(user, self.generation_setup_message(project, user), self.task_buttons(session, project))
@@ -298,13 +328,14 @@ class Bot:
             description = task_context(task)
             self.vk.send(user, "Генерирую текст…")
             draft["text"] = self.llm.generate(project, description, "" if action == "no_supplement" else text)
+            draft["dirty"] = True
             self.store.save_draft(key, draft)
             session["mode"] = None
             session["view"] = "task"
             self.store.save_session(user, session)
             self.vk.send(user, draft["text"], self.task_buttons(session, project))
             return
-        if session.get("mode") == "photos":
+        if session.get("mode") == "photos" or (not action and session.get("view") == "task" and any(a.get("type") == "photo" for a in message.get("attachments", []))):
             photos = [a["photo"] for a in message.get("attachments", []) if a["type"] == "photo"]
             known = {p["id"] for p in draft["photos"]}
             photos = {f"{p['owner_id']}_{p['id']}": p for p in photos}
@@ -315,15 +346,25 @@ class Bot:
                 raise ValueError("Прикрепите новые фотографии как фото ВК")
             directory = self.store.root / key
             directory.mkdir(exist_ok=True)
+            failed = 0
             for photo_id, photo in photos.items():
-                size = max(photo["sizes"], key=lambda s: s.get("width", 0) * s.get("height", 0))
-                content = self.vk.download_photo(size["url"])
-                filename = directory / f"{photo_id}.jpg"
+                try:
+                    size = max(photo["sizes"], key=lambda s: s.get("width", 0) * s.get("height", 0))
+                    content = self.vk.download_photo(size["url"])
+                    extension, mime = photo_format(content)
+                except Exception:
+                    failed += 1
+                    continue
+                filename = directory / f"{photo_id}.{extension}"
                 filename.write_bytes(content)
-                draft["photos"].append({"id": photo_id, "path": str(filename.relative_to(self.store.root))})
+                draft["photos"].append({"id": photo_id, "path": str(filename.relative_to(self.store.root)), "extension": extension, "mime": mime})
+                draft["dirty"] = True
                 self.store.save_draft(key, draft)
-            self.vk.send(user, f"Сохранено {len(draft['photos'])}/9 фото", self.task_buttons(session, project))
-            return
+            notice = f"Сохранено {len(draft['photos'])}/9 фото"
+            if failed:
+                notice += f". Не удалось скачать: {failed}. Пришлите их повторно; сохранённые фото не дублируются."
+            self.vk.send(user, notice, self.task_buttons(session, project))
+            return False if failed else None
         raise ValueError("Выберите действие кнопкой меню")
 
     def show_dates(self, user, session):

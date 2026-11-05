@@ -1,3 +1,4 @@
+import hashlib
 import io
 from urllib.parse import quote
 
@@ -27,8 +28,8 @@ class Google:
             self.credentials.refresh(Request())
         url = ("https://sheets.googleapis.com/" + path.removeprefix("sheets/")
                if path.startswith("sheets/") else "https://www.googleapis.com/" + path)
-        response = self.http.request(method, url,
-                                     headers={"Authorization": f"Bearer {self.credentials.token}"}, **kwargs)
+        headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {self.credentials.token}"}
+        response = self.http.request(method, url, headers=headers, **kwargs)
         response.raise_for_status()
         return response.json() if response.content else {}
 
@@ -145,7 +146,14 @@ class Google:
 
     def upload_content(self, file_id, content, mime):
         self.request("PATCH", f"upload/drive/v3/files/{file_id}",
-                     params={"uploadType": "media", "supportsAllDrives": "true"}, content=content)
+                     params={"uploadType": "media", "supportsAllDrives": "true"}, content=content, headers={"Content-Type": mime})
+
+    def trash(self, file_id):
+        try:
+            self.request("PATCH", f"drive/v3/files/{file_id}", params={"supportsAllDrives": "true"}, json={"trashed": True})
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
 
     def share(self, folder):
         permissions = self.request("GET", f"drive/v3/files/{folder}/permissions",
@@ -194,7 +202,7 @@ def publish(google, store, key, project, task):
     url = f"https://drive.google.com/drive/folders/{draft['folder']}" if draft["folder"] else None
     if existing and existing != url:
         raise ValueError("У задания уже есть другая ссылка; перезапись запрещена")
-    if draft["published"]:
+    if draft["published"] and not draft.get("dirty"):
         google.share(draft["folder"])
         google.set_link(project, row, headers, url)
         return url
@@ -206,25 +214,34 @@ def publish(google, store, key, project, task):
     files = []
     if draft["text"].strip():
         files.append(("publication.docx", word_document(draft["text"]),
-                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                      hashlib.sha256(draft["text"].encode()).hexdigest()))
     for i, photo in enumerate(draft["photos"], 1):
-        files.append((f"photo_{i:02}.jpg", (store.root / photo["path"]).read_bytes(), "image/jpeg"))
-    for name, content, mime in files:
+        content = (store.root / photo["path"]).read_bytes()
+        files.append((f"photo_{i:02}.{photo.get('extension', 'jpg')}", content, photo.get("mime", "image/jpeg"), hashlib.sha256(content).hexdigest()))
+    for name, content, mime, fingerprint in files:
         entry = draft["uploads"].get(name)
         if entry is None:
             entry = {"id": google.new_id(), "done": False}
             draft["uploads"][name] = entry
             store.save_draft(key, draft)
-        if not entry["done"]:
+        if not entry["done"] or entry.get("fingerprint") != fingerprint:
             if google.exists(entry["id"]):
                 google.upload_content(entry["id"], content, mime)
             else:
                 google.upload(entry["id"], draft["folder"], name, content, mime)
             entry["done"] = True
+            entry["fingerprint"] = fingerprint
             store.save_draft(key, draft)
+    # Remove only files previously created for this draft. Other folder contents stay intact.
+    for name in set(draft["uploads"]) - {item[0] for item in files}:
+        google.trash(draft["uploads"][name]["id"])
+        del draft["uploads"][name]
+        store.save_draft(key, draft)
     google.share(draft["folder"])
     url = f"https://drive.google.com/drive/folders/{draft['folder']}"
     google.set_link(project, row, headers, url)
     draft["published"] = True
+    draft["dirty"] = False
     store.save_draft(key, draft)
     return url

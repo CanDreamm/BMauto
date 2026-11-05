@@ -241,7 +241,7 @@ def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
     chat.send("project", p="test")
     chat.send("dates")
     chat.send("task", i=0)
-    assert actions(bot) == {"generate", "photos", "project_home"}
+    assert actions(bot) == {"generate", "edit_text", "photos", "project_home"}
     chat.send("generate")
     assert actions(bot) == {"no_supplement", "task_home", "project_home"}
     chat.send("task_home")
@@ -254,18 +254,18 @@ def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
     draft["photos"] = [{"id": str(i), "path": "unused"} for i in range(9)]
     bot.store.save_draft(key, draft)
     chat.send("task_home")
-    assert actions(bot) == {"generate", "preview", "publish", "project_home"}
+    assert actions(bot) == {"generate", "edit_text", "photos", "preview", "publish", "project_home"}
     draft["folder"] = "folder"
     bot.store.save_draft(key, draft)
     chat.send("task_home")
-    assert actions(bot) == {"preview", "publish", "project_home"}
+    assert actions(bot) == {"generate", "edit_text", "photos", "preview", "publish", "project_home"}
     draft["published"] = True
     bot.store.save_draft(key, draft)
     session = bot.store.session(1)
     session["task"]["material_url"] = "https://drive.google.com/drive/folders/folder"
     bot.store.save_session(1, session)
     chat.send("task_home")
-    assert actions(bot) == {"preview", "project_home"}
+    assert actions(bot) == {"generate", "edit_text", "photos", "preview", "project_home"}
 
 
 def test_stale_action_cannot_publish_without_text(tmp_path, project):
@@ -276,7 +276,7 @@ def test_stale_action_cannot_publish_without_text(tmp_path, project):
     chat.send("task", i=0)
     chat.send("publish")
     assert not bot.google.files
-    assert actions(bot) == {"generate", "photos", "project_home"}
+    assert actions(bot) == {"generate", "edit_text", "photos", "project_home"}
     assert any("недоступно" in text for text, _ in bot.vk.messages)
 
 

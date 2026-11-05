@@ -51,6 +51,9 @@ class FakeGoogle:
     def upload_content(self, file_id, content, mime):
         self.files[file_id] = content
 
+    def trash(self, file_id):
+        self.files.pop(file_id, None)
+
     def share(self, file_id):
         self.shared.append(file_id)
 
@@ -149,7 +152,7 @@ class FakeVK:
         self.messages.append((text, buttons))
 
     def download_photo(self, url):
-        return b"image"
+        return b"\xff\xd8image"
 
 
 class FakeLLM:

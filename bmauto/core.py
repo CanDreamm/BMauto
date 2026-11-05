@@ -111,6 +111,7 @@ class Store:
         self.db = sqlite3.connect(self.root / "state.sqlite3")
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS handled_messages (user INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(user,event))")
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS project_members (project_id TEXT NOT NULL, user_id INTEGER NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner', 'member')), PRIMARY KEY (project_id, user_id))")
         self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS project_owner ON project_members(project_id) WHERE role='owner'")
@@ -237,7 +238,15 @@ class Store:
 
     def draft(self, key):
         row = self.db.execute("SELECT body FROM drafts WHERE key=?", (key,)).fetchone()
-        return json.loads(row[0]) if row else {"text": "", "photos": [], "folder": None, "uploads": {}, "published": False}
+        return {"text": "", "photos": [], "folder": None, "uploads": {}, "published": False, "dirty": False,
+                **(json.loads(row[0]) if row else {})}
+
+    def message_handled(self, user, event):
+        return self.db.execute("SELECT 1 FROM handled_messages WHERE user=? AND event=?", (user, event)).fetchone() is not None
+
+    def mark_message_handled(self, user, event):
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO handled_messages VALUES (?,?)", (user, event))
 
     def save_draft(self, key, value):
         with self.db:

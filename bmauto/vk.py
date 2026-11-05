@@ -7,6 +7,16 @@ from urllib.parse import urlsplit
 import httpx
 
 
+def photo_format(content):
+    if content.startswith(b"\xff\xd8"):
+        return "jpg", "image/jpeg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png", "image/png"
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    raise ValueError("Прикрепите фото JPEG, PNG или WebP")
+
+
 def keyboard(buttons):
     rows = [item if isinstance(item, list) else [item] for item in buttons]
     def action(label, payload):
@@ -79,8 +89,7 @@ class VK:
                 data.extend(chunk)
                 if len(data) > 25 * 1024 * 1024:
                     raise ValueError("Фото превышает 25 МБ")
-        if not data.startswith(b"\xff\xd8"):
-            raise ValueError("Прикрепите фото в формате JPEG")
+        photo_format(data)
         return bytes(data)
 
     def run(self, handler):
