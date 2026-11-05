@@ -1,18 +1,4 @@
 {
   "timezone": "Europe/Moscow",
-  "projects": [
-    {
-      "id": "example",
-      "name": "Пример проекта",
-      "concept": "Концепция проекта и описание аудитории",
-      "prompt": "Напиши текст публикации по заданию. Не выдумывай факты.",
-      "spreadsheet_id": "ID_ТАБЛИЦЫ_ИЗ_ССЫЛКИ",
-      "worksheet": "Лист1",
-      "date_column": "Дата",
-      "weekday_column": "День недели",
-      "link_column": "Ссылка",
-      "drive_parent_id": "ID_ПАПКИ_ПРОЕКТА",
-      "public_read": true
-    }
-  ]
+  "projects": []
 }

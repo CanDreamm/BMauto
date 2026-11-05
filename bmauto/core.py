@@ -59,10 +59,27 @@ class Store:
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.commit()
 
+    @staticmethod
+    def is_demo(project):
+        return (project.get("id") == "example" and project.get("name") == "Пример проекта"
+                and project.get("spreadsheet_id") == "ID_ТАБЛИЦЫ_ИЗ_ССЫЛКИ"
+                and project.get("drive_parent_id") == "ID_ПАПКИ_ПРОЕКТА"
+                and project.get("concept") == "Концепция проекта и описание аудитории"
+                and project.get("prompt") == "Напиши текст публикации по заданию. Не выдумывай факты."
+                and project.get("revision", 1) == 1)
+
+    def remove_demo(self):
+        with self.db:
+            for key, project in self.projects().items():
+                if self.is_demo(project):
+                    self.db.execute("DELETE FROM projects WHERE id=?", (key,))
+
     def seed_projects(self, projects):
         # Legacy config is an initial import only; never overwrite bot edits.
         with self.db:
             for project in projects:
+                if self.is_demo(project):
+                    continue
                 project = {**project, "revision": 1}
                 self.db.execute("INSERT OR IGNORE INTO projects VALUES (?,?)", (project["id"], json.dumps(project)))
 

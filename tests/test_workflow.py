@@ -168,7 +168,7 @@ def test_vk_full_flow_and_photo_limit(tmp_path, project):
     send("photos")
     photos = [dict(type="photo", photo=dict(id=i, owner_id=1, sizes=[dict(width=10, height=10, url="photo")])) for i in range(10)]
     send(attachments=photos)
-    assert "не сохранена" in vk.messages[-1][0]
+    assert any("не сохранена" in text for text, _ in vk.messages)
     send(attachments=photos[:9])
     assert "9/9" in vk.messages[-1][0]
     send("done")

@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-# Ordered fields are shared by creation and editing so every setting is reachable.
+# Settings are edited independently after creating a project by name.
 FIELDS = [
     ("name", "Название", "Введите название проекта", None),
     ("concept", "Концепция", "Отправьте концепцию проекта и описание аудитории", None),
@@ -64,7 +64,26 @@ class ProjectMenus:
     def __init__(self, store, vk):
         self.store, self.vk = store, vk
 
+    def view(self, user, name):
+        session = self.store.session(user)
+        session["view"] = name
+        self.store.save_session(user, session)
+
+    def home_buttons(self, project):
+        buttons = []
+        if project.get("spreadsheet_id") and project.get("worksheet"):
+            buttons.append(("Открыть задания", {"a": "dates"}))
+        for key in ("concept", "prompt", "spreadsheet_id", "drive_parent_id"):
+            label = FIELD_MAP[key][1]
+            buttons.append((f"{label} {'✓' if project.get(key) else '— заполнить'}", {"a": "project_edit", "field": key}))
+        return buttons + [("Настройки проекта", {"a": "settings"}), ("Все проекты", {"a": "projects"})]
+
+    def show_home(self, user, project):
+        self.view(user, "home")
+        self.vk.send(user, f"Проект «{project['name']}». Выберите, что заполнить или открыть", self.home_buttons(project))
+
     def show_projects(self, user, page=0):
+        self.view(user, "projects")
         projects = list(self.store.projects().values())
         page = min(max(0, page), max(0, (len(projects) - 1) // 7))
         buttons = [(p["name"], {"a": "project", "p": p["id"]}) for p in projects[page * 7:(page + 1) * 7]]
@@ -76,6 +95,7 @@ class ProjectMenus:
         self.vk.send(user, "Выберите проект" if projects else "Пока нет проектов. Создайте первый", buttons)
 
     def show_settings(self, user, project, page=0):
+        self.view(user, "settings")
         page = min(max(0, page), (len(FIELDS) - 1) // 7)
         details = [f"Настройки проекта «{project['name']}»"]
         for key, label, _, default in FIELDS:
@@ -88,19 +108,31 @@ class ProjectMenus:
             buttons.append(("Назад", {"a": "settings", "page": page - 1}))
         if (page + 1) * 7 < len(FIELDS):
             buttons.append(("Далее", {"a": "settings", "page": page + 1}))
-        buttons.append(("Открыть задания", {"a": "dates"}))
+        buttons.extend([("Меню проекта", {"a": "project_home"}), ("Все проекты", {"a": "projects"})])
         self.vk.send(user, "\n\n".join(details), buttons)
 
     def ask(self, user, wizard):
-        key, _, prompt, default = FIELDS[wizard["step"]] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
+        self.view(user, "create" if wizard["kind"] == "create" else "edit")
+        key, _, prompt, default = FIELD_MAP["name"] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
         buttons = []
         if key == "public_read":
             buttons = [("Да, всем по ссылке", {"a": "project_value", "value": True}),
                        ("Нет, ограниченный доступ", {"a": "project_value", "value": False})]
         elif default is not None:
             buttons = [(f"Оставить: {default}", {"a": "project_default"})]
-        buttons.append(("Отмена", {"a": "project_cancel"}))
+        if wizard["kind"] == "create":
+            buttons.append(("В меню", {"a": "projects"}))
+        else:
+            buttons.extend([("Назад к настройкам", {"a": "settings", "page": wizard.get("page", 0)}),
+                            ("Меню проекта", {"a": "project_home"})])
         self.vk.send(user, prompt, buttons)
+
+    def input_buttons(self, wizard):
+        key = "name" if wizard["kind"] == "create" else wizard["field"]
+        actions = {"project_value"} if key == "public_read" else set()
+        if FIELD_MAP[key][3] is not None:
+            actions.add("project_default")
+        return actions
 
     def handle(self, user, action, payload, text, session):
         """Return True when the message belongs to project administration."""
@@ -111,7 +143,7 @@ class ProjectMenus:
             self.show_projects(user, int(payload.get("page", 0)))
             return True
         if action == "project_new":
-            session["wizard"] = {"kind": "create", "step": 0, "values": {"id": uuid.uuid4().hex}}
+            session["wizard"] = {"kind": "create"}
         elif action == "project_cancel":
             session.pop("wizard", None)
             self.store.save_session(user, session)
@@ -124,6 +156,7 @@ class ProjectMenus:
             if not project:
                 raise ValueError("Сначала выберите проект")
             session["settings_revision"] = project.get("revision", 1)
+            session["settings_page"] = int(payload.get("page", 0))
             self.store.save_session(user, session)
             self.show_settings(user, project, int(payload.get("page", 0)))
             return True
@@ -134,21 +167,18 @@ class ProjectMenus:
             if not project:
                 raise ValueError("Сначала выберите проект")
             session["wizard"] = {"kind": "edit", "field": payload["field"], "project": project["id"],
-                                 "revision": project.get("revision", 1)}
+                                 "revision": project.get("revision", 1), "page": session.get("settings_page", 0)}
         elif "wizard" in session and (action is None or action in {"project_value", "project_default"}):
             wizard = session["wizard"]
-            key, _, _, default = FIELDS[wizard["step"]] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
+            if action is not None and action not in self.input_buttons(wizard):
+                self.ask(user, wizard)
+                return True
+            key, _, _, default = FIELD_MAP["name"] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
             value = default if action == "project_default" else payload.get("value") if action == "project_value" else text
             value = validate_field(key, value)
             if wizard["kind"] == "create":
-                values = {**wizard["values"], key: value}
-                validate_columns(values)
-                wizard["values"] = values
-                wizard["step"] += 1
-                if wizard["step"] < len(FIELDS):
-                    self.store.save_session(user, session)
-                    self.ask(user, wizard)
-                    return True
+                values = {k: default for k, _, _, default in FIELDS if default is not None}
+                values.update(id=uuid.uuid4().hex, name=value, public_read=True)
                 project = self.store.save_project(values)
             else:
                 project = self.store.projects().get(wizard["project"])
@@ -166,8 +196,8 @@ class ProjectMenus:
                 session.pop(stale, None)
             session["settings_revision"] = project["revision"]
             self.store.save_session(user, session)
-            self.vk.send(user, "Настройки проекта сохранены")
-            self.show_settings(user, project)
+            self.vk.send(user, "Проект создан" if wizard["kind"] == "create" else "Настройки проекта сохранены")
+            self.show_home(user, project)
             return True
         else:
             return False

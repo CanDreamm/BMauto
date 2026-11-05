@@ -25,14 +25,7 @@ def bot_at(path, config=None):
 
 def create_project(chat):
     chat.send("project_new")
-    for value in ("Авто", "Для покупателей авто", "Напиши публикацию",
-                  "https://docs.google.com/spreadsheets/d/sheet_123/edit", "Контент",
-                  "https://drive.google.com/drive/folders/folder_123"):
-        chat.send(text=value)
-    for _ in range(3):
-        chat.send("project_default")
-    chat.send("project_value", value=True)
-    chat.send("project_default")
+    chat.send(text="Авто")
     return next(iter(chat.bot.store.projects().values()))
 
 
@@ -42,8 +35,10 @@ def test_create_and_restart_without_config_json(tmp_path):
     chat.send(text="Начать")
     assert bot.vk.messages[-1][1] == [("Создать проект", {"a": "project_new"})]
     project = create_project(chat)
-    assert project["spreadsheet_id"] == "sheet_123"
-    assert project["drive_parent_id"] == "folder_123"
+    assert project["name"] == "Авто"
+    assert "spreadsheet_id" not in project
+    assert "drive_parent_id" not in project
+    assert "concept" not in project and "prompt" not in project
     assert project["date_column"] == "Дата"
     assert project["public_read"] is True
     assert project["timezone"] == "Europe/Moscow"
@@ -109,13 +104,10 @@ def test_cancel_and_invalid_input_do_not_write_project(tmp_path):
 def test_wizard_resumes_after_restart(tmp_path):
     chat = Conversation(bot_at(tmp_path))
     chat.send("project_new")
-    chat.send(text="Первый проект")
     restarted = bot_at(tmp_path)
-    Conversation(restarted).send(text="Сохранённая концепция")
-    wizard = restarted.store.session(1)["wizard"]
-    assert wizard["step"] == 2
-    assert wizard["values"]["name"] == "Первый проект"
-    assert wizard["values"]["concept"] == "Сохранённая концепция"
+    Conversation(restarted).send(text="Первый проект")
+    assert next(iter(restarted.store.projects().values()))["name"] == "Первый проект"
+    assert "wizard" not in restarted.store.session(1)
 
 
 def test_duplicate_column_is_rejected(tmp_path, project):
@@ -140,7 +132,7 @@ def test_other_operator_must_reload_after_settings_change(tmp_path, project):
     editor.send("project_edit", field="concept")
     editor.send(text="Новая концепция")
     operator.send("task", i=0)
-    assert "Настройки проекта изменились" in bot.vk.messages[-1][0]
+    assert any("Настройки проекта изменились" in text for text, _ in bot.vk.messages)
     assert "task" not in bot.store.session(2)
 
 
@@ -189,3 +181,130 @@ def test_google_authorization_is_lazy(tmp_path):
     assert google.credentials is None
     with pytest.raises(ValueError, match="Google ещё не подключён"):
         google.rows(dict(worksheet="Sheet", spreadsheet_id="123"))
+
+
+def actions(bot):
+    return {p["a"] for _, p in bot.vk.messages[-1][1]}
+
+
+def test_create_only_name_then_independent_fields(tmp_path):
+    bot = bot_at(tmp_path)
+    chat = Conversation(bot)
+    project = create_project(chat)
+    assert actions(bot) == {"project_edit", "settings", "projects"}
+    assert "dates" not in actions(bot)
+    chat.send("project_edit", field="concept")
+    assert actions(bot) == {"settings", "project_home"}
+    chat.send(text="Наша концепция")
+    assert bot.store.projects()[project["id"]]["concept"] == "Наша концепция"
+    assert bot.store.session(1)["view"] == "home"
+    chat.send("project_edit", field="spreadsheet_id")
+    chat.send(text="https://docs.google.com/spreadsheets/d/abc/edit")
+    assert "dates" in actions(bot)
+    assert "generate" not in actions(bot)  # Home only contains project actions.
+
+
+def test_return_from_edit_does_not_save_input(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("project_edit", field="concept")
+    chat.send("project_home")
+    assert "wizard" not in bot.store.session(1)
+    assert bot.store.session(1)["view"] == "home"
+    chat.send(text="Это уже не концепция")
+    assert bot.store.projects()["test"]["concept"] == "Concept"
+    assert actions(bot) == {"dates", "project_edit", "settings", "projects"}
+
+
+def test_return_to_settings_keeps_page(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("settings", page=1)
+    chat.send("project_edit", field="timezone")
+    back = next(p for _, p in bot.vk.messages[-1][1] if p["a"] == "settings")
+    assert back["page"] == 1
+    chat.send(**{"action": back["a"], "page": back["page"]})
+    assert bot.store.session(1)["settings_page"] == 1
+    assert "wizard" not in bot.store.session(1)
+    assert "project_home" in actions(bot)
+
+
+def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("dates")
+    chat.send("task", i=0)
+    assert actions(bot) == {"generate", "photos", "dates", "project_home"}
+    chat.send("generate")
+    assert actions(bot) == {"no_supplement", "task_home", "project_home"}
+    chat.send("task_home")
+    assert bot.store.session(1)["mode"] is None
+    chat.send("photos")
+    assert actions(bot) == {"done", "task_home", "project_home"}
+    chat.send("done")
+    key, draft = bot.draft_for(bot.store.session(1), project)
+    draft["text"] = "Text"
+    draft["photos"] = [{"id": str(i), "path": "unused"} for i in range(9)]
+    bot.store.save_draft(key, draft)
+    chat.send("task_home")
+    assert actions(bot) == {"generate", "preview", "publish", "dates", "project_home"}
+    draft["folder"] = "folder"
+    bot.store.save_draft(key, draft)
+    chat.send("task_home")
+    assert actions(bot) == {"preview", "publish", "dates", "project_home"}
+    draft["published"] = True
+    bot.store.save_draft(key, draft)
+    chat.send("task_home")
+    assert actions(bot) == {"preview", "dates", "project_home"}
+
+
+def test_stale_action_cannot_publish_without_text(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("dates")
+    chat.send("task", i=0)
+    chat.send("publish")
+    assert not bot.google.files
+    assert actions(bot) == {"generate", "photos", "dates", "project_home"}
+    assert any("недоступно" in text for text, _ in bot.vk.messages)
+
+
+def test_missing_generation_settings_hide_button(tmp_path, project):
+    project.pop("prompt")
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("dates")
+    chat.send("task", i=0)
+    assert "generate" not in actions(bot)
+
+
+def test_remove_only_untouched_demo_and_prevent_reimport(tmp_path, project):
+    demo = dict(project, id="example", name="Пример проекта",
+                concept="Концепция проекта и описание аудитории",
+                prompt="Напиши текст публикации по заданию. Не выдумывай факты.",
+                spreadsheet_id="ID_ТАБЛИЦЫ_ИЗ_ССЫЛКИ", drive_parent_id="ID_ПАПКИ_ПРОЕКТА")
+    store = Store(tmp_path)
+    store.save_project(demo)
+    bot = bot_at(tmp_path, {"projects": [demo, project]})
+    assert set(bot.store.projects()) == {"test"}
+    assert set(bot_at(tmp_path, {"projects": [demo, project]}).store.projects()) == {"test"}
+    changed = store.save_project(demo)
+    store.save_project({**changed, "concept": "Моя реальная концепция"}, expected_revision=1)
+    bot = bot_at(tmp_path, {"projects": [demo]})
+    assert bot.store.projects()["example"]["concept"] == "Моя реальная концепция"
+
+
+def test_menu_text_exits_current_input(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("project_edit", field="prompt")
+    chat.send(text="Меню")
+    assert "wizard" not in bot.store.session(1)
+    assert bot.store.session(1)["view"] == "home"
+    assert bot.store.projects()["test"]["prompt"] == "Prompt"
