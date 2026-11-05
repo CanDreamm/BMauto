@@ -8,9 +8,14 @@ import httpx
 
 
 def keyboard(buttons):
+    rows = [item if isinstance(item, list) else [item] for item in buttons]
+    def action(label, payload):
+        if "open_link" in payload:
+            return {"type": "open_link", "label": label[:40], "link": payload["open_link"]}
+        return {"type": "text", "label": label[:40], "payload": json.dumps(payload)}
     return {"inline": False, "one_time": False, "buttons": [
-        [{"action": {"type": "text", "label": label[:40], "payload": json.dumps(payload)}, "color": "secondary"}]
-        for label, payload in buttons
+        [({"action": action(label, payload)} if "open_link" in payload else {"action": action(label, payload), "color": "secondary"})
+         for label, payload in row] for row in rows
     ]}
 
 

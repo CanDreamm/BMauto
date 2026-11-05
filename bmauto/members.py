@@ -18,7 +18,7 @@ class MemberMenus:
             buttons.append(("Назад", {"a": "members", "page": page - 1}))
         if (page + 1) * 6 < len(members):
             buttons.append(("Далее", {"a": "members", "page": page + 1}))
-        buttons.extend([("Добавить участника", {"a": "member_add"}), ("Меню проекта", {"a": "project_home"})])
+        buttons.extend([("Добавить участника", {"a": "member_add"}), ("К настройкам", {"a": "settings"})])
         session = self.store.session(user)
         session.update(view="members", members_page=page, mode=None)
         session.pop("wizard", None)

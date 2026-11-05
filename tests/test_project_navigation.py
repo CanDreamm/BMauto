@@ -1,0 +1,133 @@
+import json
+from datetime import date, timedelta
+
+from bmauto.core import Store
+from bmauto.google import Google
+from bmauto.main import Bot
+from bmauto.vk import VK, keyboard
+from test_projects import Conversation, actions, bot_at, create_project
+from test_workflow import FakeGoogle, FakeLLM, FakeVK
+
+
+def serialized(bot):
+    return keyboard(bot.vk.messages[-1][1])["buttons"]
+
+
+def payload(button):
+    return json.loads(button["action"]["payload"])
+
+
+def many_dates(google, count):
+    start = date(3000, 1, 1)
+    google.table = [["Дата", "День недели", "Задание", "Ссылка"]] + [
+        [(start + timedelta(days=i)).strftime("%d.%m.%Y"), "Среда", f"Задание {i}", ""]
+        for i in range(count)
+    ]
+
+
+def test_select_project_directly_shows_two_column_dates_and_only_two_footer_buttons(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    many_dates(bot.google, 5)
+    Conversation(bot).send("project", p="test")
+    rows = serialized(bot)
+    assert [len(row) for row in rows] == [2, 2, 1, 1, 1]
+    assert [payload(b)["i"] for row in rows[:-2] for b in row] == list(range(5))
+    assert rows[0][0]["action"]["label"] == "01.01.3000 — Среда"
+    assert rows[-2][0]["action"]["label"] == "Настройки"
+    assert rows[-1][0]["action"]["label"] == "Все проекты"
+    assert actions(bot) == {"task", "settings", "projects"}
+    assert bot.store.session(1)["view"] == "dates"
+
+
+def test_dates_pagination_retains_pairs_and_selects_correct_task(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    many_dates(bot.google, 29)
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    first_page = serialized(bot)
+    assert len(first_page) == 9 and all(len(row) == 2 for row in first_page[:6])
+    chat.send("page", page=1)
+    middle = serialized(bot)
+    assert len(middle) == 9 and len(middle[-3]) == 2
+    assert [payload(b)["i"] for row in middle[:6] for b in row] == list(range(12, 24))
+    chat.send("task", i=17)
+    assert "Задание: Задание 17" in bot.vk.messages[-1][0]
+    chat.send("project_home")
+    assert actions(bot) == {"task", "page", "settings", "projects"}
+    assert "task" not in bot.store.session(1)
+    chat.send("page", page=2)
+    last = serialized(bot)
+    assert [len(row) for row in last[:3]] == [2, 2, 1]
+    assert [payload(b)["i"] for row in last[:3] for b in row] == list(range(24, 29))
+
+
+def test_new_project_and_empty_calendar_have_exact_footer(tmp_path, project):
+    bot = bot_at(tmp_path)
+    create_project(Conversation(bot))
+    assert actions(bot) == {"settings", "projects"}
+    assert len(serialized(bot)) == 2
+    assert "настройках" in bot.vk.messages[-1][0]
+    empty = bot_at(tmp_path / "other", {"projects": [project]})
+    empty.google.table = [["Дата", "День недели", "Ссылка"]]
+    Conversation(empty).send("project", p="test")
+    assert actions(empty) == {"settings", "projects"}
+    assert "Будущих дат нет" in empty.vk.messages[-1][0]
+
+
+def test_missing_google_authorization_and_api_failure_keep_settings_accessible(tmp_path, project):
+    vk = FakeVK()
+    bot = Bot({"projects": [project]}, Store(tmp_path), vk, Google(str(tmp_path / "missing.json")), FakeLLM(), {1})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    assert actions(bot) == {"settings", "projects"}
+    assert "Google ещё не подключён" in vk.messages[-1][0]
+    chat.send("settings")
+    assert "project_edit" in actions(bot)
+    bot.google = FakeGoogle()
+    many_dates(bot.google, 2)
+    chat.send("project_home")
+    assert actions(bot) == {"task", "settings", "projects"}
+    def fail(project):
+        raise RuntimeError("upstream failure")
+    bot.google.rows = fail
+    chat.send("project_home")
+    assert actions(bot) == {"settings", "projects"}
+    assert "Не удалось загрузить даты" in vk.messages[-1][0]
+    assert not bot.store.session(1)["tasks"]
+
+
+def test_settings_contain_fields_and_members_without_nested_settings_button(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("settings")
+    assert actions(bot) == {"project_edit", "settings", "members", "google_connect", "project_home"}
+    labels = [b["action"]["label"] for row in serialized(bot) for b in row]
+    assert "Участники" in labels
+    assert "Настройки" not in labels and "Настройки проекта" not in labels
+    assert len(serialized(bot)) <= 10
+    chat.send("project_edit", field="concept")
+    assert "Текущее значение: Concept" in bot.vk.messages[-1][0]
+    chat.send(text="Новая концепция")
+    assert bot.store.session(1)["view"] == "settings"
+    assert "members" in actions(bot) and "task" not in actions(bot)
+    chat.send("members")
+    assert "settings" in actions(bot)
+    chat.send("settings")
+    chat.send("project_home")
+    assert actions(bot) == {"task", "settings", "projects"}
+
+
+def test_vk_send_transmits_real_two_column_keyboard(tmp_path, project):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    many_dates(bot.google, 4)
+    Conversation(bot).send("project", p="test")
+    vk = VK.__new__(VK)
+    calls = []
+    vk.call = lambda method, **kwargs: calls.append((method, kwargs))
+    text, buttons = bot.vk.messages[-1]
+    vk.send(1, text, buttons)
+    sent = json.loads(calls[0][1]["keyboard"])
+    assert [len(row) for row in sent["buttons"]] == [2, 2, 1, 1]
+    assert sent["buttons"][-2][0]["action"]["label"] == "Настройки"
+    assert sent["buttons"][-1][0]["action"]["label"] == "Все проекты"

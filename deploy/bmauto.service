@@ -1,0 +1,18 @@
+[Unit]
+Description=BMauto VK bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/bmauto
+EnvironmentFile=/opt/bmauto/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/bmauto/.venv/bin/python -m bmauto.main
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

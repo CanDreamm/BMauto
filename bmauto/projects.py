@@ -61,8 +61,10 @@ def validate_columns(project):
 
 
 class ProjectMenus:
-    def __init__(self, store, vk, admins):
+    def __init__(self, store, vk, admins, open_project, connections=None):
         self.store, self.vk, self.admins = store, vk, admins
+        self.open_project = open_project
+        self.connections = connections
 
     def managed(self, user, project_id):
         if not self.store.can_manage(project_id, user, self.admins):
@@ -74,22 +76,8 @@ class ProjectMenus:
         session["view"] = name
         self.store.save_session(user, session)
 
-    def home_buttons(self, project, user):
-        buttons = []
-        if project.get("spreadsheet_id") and project.get("worksheet"):
-            buttons.append(("Открыть задания", {"a": "dates"}))
-        if self.store.can_manage(project["id"], user, self.admins):
-            for key in ("concept", "prompt", "spreadsheet_id", "drive_parent_id"):
-                label = FIELD_MAP[key][1]
-                buttons.append((f"{label} {'✓' if project.get(key) else '— заполнить'}", {"a": "project_edit", "field": key}))
-            buttons.extend([("Настройки проекта", {"a": "settings"}), ("Участники", {"a": "members"})])
-        return buttons + [("Все проекты", {"a": "projects"})]
-
     def show_home(self, user, project):
-        if not self.store.can_access(project["id"], user, self.admins):
-            raise ValueError("Нет доступа к проекту")
-        self.view(user, "home")
-        self.vk.send(user, f"Проект «{project['name']}». Выберите действие", self.home_buttons(project, user))
+        self.open_project(user, project)
 
     def show_projects(self, user, page=0):
         self.view(user, "projects")
@@ -105,22 +93,32 @@ class ProjectMenus:
         self.vk.send(user, "Выберите проект" if projects else "Нет доступных проектов", buttons)
 
     def show_settings(self, user, project, page=0):
-        self.managed(user, project["id"])
+        if not self.store.can_access(project["id"], user, self.admins):
+            raise ValueError("Нет доступа к проекту")
         self.view(user, "settings")
-        page = min(max(0, page), (len(FIELDS) - 1) // 7)
+        page = min(max(0, page), (len(FIELDS) - 1) // 6)
         details = [f"Настройки проекта «{project['name']}»"]
         for key, label, _, default in FIELDS:
             value = project.get(key, default)
             if key == "public_read":
                 value = "Всем по ссылке" if value else "Только существующие права"
             details.append(f"{label}: {value if value is not None else 'Не задано'}")
-        buttons = [(label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS[page * 7:(page + 1) * 7]]
-        if page:
-            buttons.append(("Назад", {"a": "settings", "page": page - 1}))
-        if (page + 1) * 7 < len(FIELDS):
-            buttons.append(("Далее", {"a": "settings", "page": page + 1}))
-        buttons.extend([("Меню проекта", {"a": "project_home"}), ("Все проекты", {"a": "projects"})])
-        self.vk.send(user, "\n\n".join(details), buttons)
+        buttons = []
+        if self.store.can_manage(project["id"], user, self.admins):
+            buttons = [(label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS[page * 6:(page + 1) * 6]]
+            if page:
+                buttons.append(("Предыдущие поля", {"a": "settings", "page": page - 1}))
+            if (page + 1) * 6 < len(FIELDS):
+                buttons.append(("Следующие поля", {"a": "settings", "page": page + 1}))
+            buttons.append(("Участники", {"a": "members"}))
+            connected = self.connections is not None and self.connections.connected(project)
+            buttons.append(("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"}))
+        else:
+            details.append("Настройки доступны для просмотра. Изменения вносит владелец проекта")
+        buttons.append(("К датам проекта", {"a": "project_home"}))
+        message = (f"Настройки проекта «{project['name']}»\nВыберите параметр"
+                   if self.store.can_manage(project["id"], user, self.admins) else "\n\n".join(details))
+        self.vk.send(user, message, buttons)
 
     def ask(self, user, wizard):
         if wizard["kind"] == "create":
@@ -129,7 +127,12 @@ class ProjectMenus:
         else:
             self.managed(user, wizard["project"])
         self.view(user, "create" if wizard["kind"] == "create" else "edit")
-        key, _, prompt, default = FIELD_MAP["name"] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
+        key, label, prompt, default = FIELD_MAP["name"] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
+        if wizard["kind"] != "create":
+            current = self.store.projects()[wizard["project"]].get(key, default)
+            if key == "public_read":
+                current = "Всем по ссылке" if current else "Только существующие права"
+            prompt = f"{label}\nТекущее значение: {current if current is not None else 'Не задано'}\n\n{prompt}"
         buttons = []
         if key == "public_read":
             buttons = [("Да, всем по ссылке", {"a": "project_value", "value": True}),
@@ -140,7 +143,7 @@ class ProjectMenus:
             buttons.append(("В меню", {"a": "projects"}))
         else:
             buttons.extend([("Назад к настройкам", {"a": "settings", "page": wizard.get("page", 0)}),
-                            ("Меню проекта", {"a": "project_home"})])
+                            ("К датам проекта", {"a": "project_home"})])
         self.vk.send(user, prompt, buttons)
 
     def input_buttons(self, wizard):
@@ -170,7 +173,9 @@ class ProjectMenus:
         elif action == "settings":
             session.pop("wizard", None)
             session["mode"] = None
-            project = self.managed(user, session.get("project"))
+            if not self.store.can_access(session.get("project"), user, self.admins):
+                raise ValueError("Нет доступа к проекту")
+            project = self.store.projects()[session["project"]]
             session["settings_revision"] = project.get("revision", 1)
             session["settings_page"] = int(payload.get("page", 0))
             self.store.save_session(user, session)
@@ -181,7 +186,7 @@ class ProjectMenus:
                 raise ValueError("Неизвестная настройка")
             project = self.managed(user, session.get("project"))
             session["wizard"] = {"kind": "edit", "field": payload["field"], "project": project["id"],
-                                 "revision": project.get("revision", 1), "page": session.get("settings_page", 0)}
+                                 "revision": project.get("revision", 1), "page": list(FIELD_MAP).index(payload["field"]) // 6}
         elif "wizard" in session and (action is None or action in {"project_value", "project_default"}):
             wizard = session["wizard"]
             if action is not None and action not in self.input_buttons(wizard):
@@ -211,7 +216,12 @@ class ProjectMenus:
             session["settings_revision"] = project["revision"]
             self.store.save_session(user, session)
             self.vk.send(user, "Проект создан" if wizard["kind"] == "create" else "Настройки проекта сохранены")
-            self.show_home(user, project)
+            if wizard["kind"] == "create":
+                self.show_home(user, project)
+            else:
+                session["settings_page"] = wizard.get("page", 0)
+                self.store.save_session(user, session)
+                self.show_settings(user, project, session["settings_page"])
             return True
         else:
             return False

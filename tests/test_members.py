@@ -34,10 +34,10 @@ def test_invite_without_env_edit_and_filter_projects(tmp_path, project):
     assert buttons == [("Test", {"a": "project", "p": "test"})]
     assert "Скрытый проект" not in bot.vk.messages[-1][0]
     chat.send("project", p="test")
-    assert actions(bot) == {"dates", "projects"}
+    assert actions(bot) == {"task", "settings", "projects"}
     chat.send("project", p="private")
     assert bot.store.session(3)["project"] == "test"
-    assert actions(bot) == {"dates", "projects"}
+    assert actions(bot) == {"task", "settings", "projects"}
 
 
 def test_new_project_creator_is_owner_and_members_persist(tmp_path):
@@ -50,7 +50,7 @@ def test_new_project_creator_is_owner_and_members_persist(tmp_path):
     assert restarted.store.members(project["id"])[1] == "owner"
 
 
-@pytest.mark.parametrize("action,payload", [("settings", {}), ("project_edit", {"field": "concept"}),
+@pytest.mark.parametrize("action,payload", [("project_edit", {"field": "concept"}),
                                            ("members", {}), ("member_add", {}),
                                            ("member_remove", {"user": 1}), ("project_new", {})])
 def test_members_cannot_change_settings_or_access(tmp_path, project, action, payload):
@@ -62,7 +62,7 @@ def test_members_cannot_change_settings_or_access(tmp_path, project, action, pay
     chat.send(action, **payload)
     assert bot.store.projects()["test"] == before
     assert bot.store.members("test") == {1: "owner", 3: "member"}
-    assert actions(bot) == {"dates", "projects"}
+    assert actions(bot) == {"task", "settings", "projects"}
     assert "wizard" not in bot.store.session(3)
 
 
@@ -214,7 +214,21 @@ def test_member_cannot_resume_old_admin_wizard(tmp_path, project):
     Conversation(bot, 3).send(text="Новый проект")
     assert set(bot.store.projects()) == {"test"}
     assert "wizard" not in bot.store.session(3)
-    assert actions(bot) == {"dates", "projects"}
+    assert actions(bot) == {"task", "settings", "projects"}
+
+
+def test_member_can_read_settings_but_cannot_edit(tmp_path, project):
+    bot = make_bot(tmp_path, [project])
+    add_through_menu(bot)
+    member = Conversation(bot, 3)
+    member.send("project", p="test")
+    member.send("settings")
+    assert actions(bot) == {"project_home"}
+    assert "Concept" in bot.vk.messages[-1][0]
+    member.send("project_edit", field="concept")
+    member.send(text="Подмена концепции")
+    assert bot.store.projects()["test"]["concept"] == "Concept"
+    assert actions(bot) == {"project_home"}
 
 
 @pytest.mark.parametrize("value,expected", [("123", 123), ("id123", 123),

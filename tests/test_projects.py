@@ -184,24 +184,27 @@ def test_google_authorization_is_lazy(tmp_path):
 
 
 def actions(bot):
-    return {p["a"] for _, p in bot.vk.messages[-1][1]}
+    rows = [item if isinstance(item, list) else [item] for item in bot.vk.messages[-1][1]]
+    return {p["a"] for row in rows for _, p in row}
 
 
 def test_create_only_name_then_independent_fields(tmp_path):
     bot = bot_at(tmp_path)
     chat = Conversation(bot)
     project = create_project(chat)
-    assert actions(bot) == {"project_edit", "settings", "members", "projects"}
+    assert actions(bot) == {"settings", "projects"}
     assert "dates" not in actions(bot)
     chat.send("project_edit", field="concept")
     assert actions(bot) == {"settings", "project_home"}
     chat.send(text="Наша концепция")
     assert bot.store.projects()[project["id"]]["concept"] == "Наша концепция"
-    assert bot.store.session(1)["view"] == "home"
+    assert bot.store.session(1)["view"] == "settings"
     chat.send("project_edit", field="spreadsheet_id")
     chat.send(text="https://docs.google.com/spreadsheets/d/abc/edit")
-    assert "dates" in actions(bot)
-    assert "generate" not in actions(bot)  # Home only contains project actions.
+    assert bot.store.session(1)["view"] == "settings"
+    chat.send("project_home")
+    assert actions(bot) == {"task", "settings", "projects"}
+    assert "generate" not in actions(bot)
 
 
 def test_return_from_edit_does_not_save_input(tmp_path, project):
@@ -211,10 +214,10 @@ def test_return_from_edit_does_not_save_input(tmp_path, project):
     chat.send("project_edit", field="concept")
     chat.send("project_home")
     assert "wizard" not in bot.store.session(1)
-    assert bot.store.session(1)["view"] == "home"
+    assert bot.store.session(1)["view"] == "dates"
     chat.send(text="Это уже не концепция")
     assert bot.store.projects()["test"]["concept"] == "Concept"
-    assert actions(bot) == {"dates", "project_edit", "settings", "members", "projects"}
+    assert actions(bot) == {"task", "settings", "projects"}
 
 
 def test_return_to_settings_keeps_page(tmp_path, project):
@@ -237,7 +240,7 @@ def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
     chat.send("project", p="test")
     chat.send("dates")
     chat.send("task", i=0)
-    assert actions(bot) == {"generate", "photos", "dates", "project_home"}
+    assert actions(bot) == {"generate", "photos", "project_home"}
     chat.send("generate")
     assert actions(bot) == {"no_supplement", "task_home", "project_home"}
     chat.send("task_home")
@@ -250,15 +253,15 @@ def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
     draft["photos"] = [{"id": str(i), "path": "unused"} for i in range(9)]
     bot.store.save_draft(key, draft)
     chat.send("task_home")
-    assert actions(bot) == {"generate", "preview", "publish", "dates", "project_home"}
+    assert actions(bot) == {"generate", "preview", "publish", "project_home"}
     draft["folder"] = "folder"
     bot.store.save_draft(key, draft)
     chat.send("task_home")
-    assert actions(bot) == {"preview", "publish", "dates", "project_home"}
+    assert actions(bot) == {"preview", "publish", "project_home"}
     draft["published"] = True
     bot.store.save_draft(key, draft)
     chat.send("task_home")
-    assert actions(bot) == {"preview", "dates", "project_home"}
+    assert actions(bot) == {"preview", "project_home"}
 
 
 def test_stale_action_cannot_publish_without_text(tmp_path, project):
@@ -269,7 +272,7 @@ def test_stale_action_cannot_publish_without_text(tmp_path, project):
     chat.send("task", i=0)
     chat.send("publish")
     assert not bot.google.files
-    assert actions(bot) == {"generate", "photos", "dates", "project_home"}
+    assert actions(bot) == {"generate", "photos", "project_home"}
     assert any("недоступно" in text for text, _ in bot.vk.messages)
 
 
@@ -306,5 +309,5 @@ def test_menu_text_exits_current_input(tmp_path, project):
     chat.send("project_edit", field="prompt")
     chat.send(text="Меню")
     assert "wizard" not in bot.store.session(1)
-    assert bot.store.session(1)["view"] == "home"
+    assert bot.store.session(1)["view"] == "dates"
     assert bot.store.projects()["test"]["prompt"] == "Prompt"

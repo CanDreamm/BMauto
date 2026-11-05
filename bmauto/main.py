@@ -9,23 +9,51 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from .core import Store, tasks_from_rows
-from .google import Google, publish
+from .google import publish
 from .llm import GenAPI
 from .members import MemberMenus
+from .oauth import GoogleMenus, ProjectGoogle
+from .oauth_server import connections_from_env
 from .projects import ProjectMenus
 from .vk import VK
 
 
 class Bot:
-    def __init__(self, config, store, vk, google, llm, allowed):
+    def __init__(self, config, store, vk, google, llm, allowed, connections=None):
         store.seed_projects([{**p, "timezone": p.get("timezone", config.get("timezone", "Europe/Moscow"))}
                              for p in config.get("projects", [])])
         store.remove_demo()
         store.ensure_owners(min(allowed) if allowed else None)
-        self.project_menus = ProjectMenus(store, vk, allowed)
+        self.project_menus = ProjectMenus(store, vk, allowed, self.open_project, connections)
         self.member_menus = MemberMenus(store, vk, allowed)
+        self.google_menus = GoogleMenus(connections, store, vk, allowed)
         self.zone = ZoneInfo(config.get("timezone", "Europe/Moscow"))
         self.store, self.vk, self.google, self.llm, self.allowed = store, vk, google, llm, allowed
+
+    def google_for(self, project):
+        return self.google.for_project(project) if isinstance(self.google, ProjectGoogle) else self.google
+
+    def open_project(self, user, project):
+        if not self.store.can_access(project["id"], user, self.allowed):
+            raise ValueError("Нет доступа к проекту")
+        session = self.store.session(user)
+        for key in ("wizard", "task", "member_input", "member_remove", "dates_error"):
+            session.pop(key, None)
+        session.update(project=project["id"], view="dates", mode=None, page=0,
+                       project_revision=project.get("revision", 1), tasks=[])
+        if not project.get("spreadsheet_id") or not project.get("worksheet"):
+            session["dates_error"] = "Укажите Google Таблицу и вкладку в настройках проекта, чтобы появились даты"
+        else:
+            try:
+                zone = ZoneInfo(project.get("timezone", str(self.zone)))
+                tasks = tasks_from_rows(self.google_for(project).rows(project), project, datetime.now(zone).date())
+                session["tasks"] = [{**asdict(t), "day": t.day.isoformat()} for t in tasks]
+            except ValueError as exc:
+                session["dates_error"] = str(exc)
+            except Exception:
+                session["dates_error"] = "Не удалось загрузить даты. Проверьте подключение Google и доступ к таблице в настройках проекта"
+        self.store.save_session(user, session)
+        self.show_dates(user, session)
 
     def draft_for(self, session, project):
         task = session["task"]
@@ -53,7 +81,7 @@ class Bot:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
         if draft["text"].strip() and project.get("drive_parent_id") and not draft["published"]:
             buttons.append(("Повторить отправку" if draft["folder"] else "Отправить в таблицу", {"a": "publish"}))
-        return buttons + [("Выбрать дату", {"a": "dates"}), ("Меню проекта", {"a": "project_home"})]
+        return buttons + [("К датам проекта", {"a": "project_home"})]
 
     def render(self, user, session=None, notice=None):
         session = self.store.session(user) if session is None else session
@@ -78,7 +106,7 @@ class Bot:
             else:
                 self.project_menus.show_home(user, project)
             return
-        if project and not self.store.can_manage(project["id"], user, self.allowed) and ("wizard" in session or session.get("view") in {"settings", "edit", "create"}):
+        if project and not self.store.can_manage(project["id"], user, self.allowed) and ("wizard" in session or session.get("view") in {"edit", "create"}):
             session.pop("wizard", None)
             self.store.save_session(user, session)
             self.project_menus.show_home(user, project)
@@ -139,6 +167,8 @@ class Bot:
             session.pop("member_remove", None)
         if self.member_menus.handle(user, action, payload, text, session):
             return
+        if self.google_menus.handle(user, action, session):
+            return
         if self.project_menus.handle(user, action, payload, text, session):
             return
         projects = self.store.visible_projects(user, self.allowed)
@@ -154,29 +184,8 @@ class Bot:
             self.project_menus.show_projects(user)
             return
         project = projects[session["project"]]
-        if action == "project_home":
-            session.pop("wizard", None)
-            session["mode"] = None
-            self.store.save_session(user, session)
+        if action in {"project_home", "dates"}:
             self.project_menus.show_home(user, project)
-            return
-        if action == "dates":
-            if not project.get("spreadsheet_id") or not project.get("worksheet"):
-                raise ValueError("Сначала заполните Google Таблицу и вкладку в меню проекта")
-            session.pop("wizard", None)
-            session.pop("task", None)
-            session["mode"], session["view"] = None, "home"
-            self.store.save_session(user, session)
-            zone = ZoneInfo(project.get("timezone", str(self.zone)))
-            tasks = tasks_from_rows(self.google.rows(project), project, datetime.now(zone).date())
-            session["tasks"] = [{**asdict(t), "day": t.day.isoformat()} for t in tasks]
-            session.pop("task", None)
-            session["mode"] = None
-            session["page"] = 0
-            session["project_revision"] = project.get("revision", 1)
-            session["view"] = "dates"
-            self.store.save_session(user, session)
-            self.show_dates(user, session)
             return
         if session.get("view") in {"home", "settings", "projects", "create", "edit"}:
             self.render(user, notice="Выберите действие кнопкой текущего меню")
@@ -185,6 +194,8 @@ class Bot:
             raise ValueError("Настройки проекта изменились. Откройте задания заново через меню проекта")
         if action == "page":
             session["page"] = max(0, int(payload["page"]))
+            session.pop("task", None)
+            session["view"], session["mode"] = "dates", None
             self.store.save_session(user, session)
             self.show_dates(user, session)
             return
@@ -212,7 +223,7 @@ class Bot:
             return
         if action == "publish":
             self.vk.send(user, "Сохраняю материалы на Google Диск…")
-            url = publish(self.google, self.store, key, project, task)
+            url = publish(self.google_for(project), self.store, key, project, task)
             self.vk.send(user, "Готово. Ссылка записана в таблицу:\n" + url, self.task_buttons(session, project))
             return
         if draft["folder"]:
@@ -270,15 +281,30 @@ class Bot:
         raise ValueError("Выберите действие кнопкой меню")
 
     def show_dates(self, user, session):
-        page = session.get("page", 0)
-        buttons = [(f"{t['day']} — {t['weekday']} (стр. {t['row']})", {"a": "task", "i": i})
-                   for i, t in enumerate(session["tasks"]) if page * 6 <= i < (page + 1) * 6]
+        project = self.store.projects()[session["project"]]
+        tasks = session.get("tasks", [])
+        page = min(max(0, session.get("page", 0)), max(0, (len(tasks) - 1) // 12))
+        session["page"] = page
+        self.store.save_session(user, session)
+        date_buttons = []
+        days = [t["day"] for t in tasks]
+        for i, task in enumerate(tasks):
+            if page * 12 <= i < (page + 1) * 12:
+                label = f"{datetime.fromisoformat(task['day']):%d.%m.%Y} — {task['weekday']}"
+                if days.count(task["day"]) > 1:
+                    label += f" · {task['row']}"
+                date_buttons.append((label, {"a": "task", "i": i}))
+        rows = [date_buttons[i:i + 2] for i in range(0, len(date_buttons), 2)]
+        pagination = []
         if page:
-            buttons.append(("Назад", {"a": "page", "page": page - 1}))
-        if (page + 1) * 6 < len(session["tasks"]):
-            buttons.append(("Далее", {"a": "page", "page": page + 1}))
-        buttons.extend([("Меню проекта", {"a": "project_home"}), ("Все проекты", {"a": "projects"})])
-        self.vk.send(user, "Выберите будущую дату" if session["tasks"] else "Будущих дат нет", buttons)
+            pagination.append(("Назад", {"a": "page", "page": page - 1}))
+        if (page + 1) * 12 < len(tasks):
+            pagination.append(("Далее", {"a": "page", "page": page + 1}))
+        if pagination:
+            rows.append(pagination)
+        rows.extend([[("Настройки", {"a": "settings"})], [("Все проекты", {"a": "projects"})]])
+        status = session.get("dates_error") or ("Выберите дату" if tasks else "Будущих дат нет")
+        self.vk.send(user, f"Проект «{project['name']}»\n{status}", rows)
 
 
 def main():
@@ -289,9 +315,11 @@ def main():
     config_path = Path(os.getenv("APP_CONFIG") or "config.json")
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     vk = VK(os.environ["VK_TOKEN"], int(os.environ["VK_GROUP_ID"]))
-    bot = Bot(config, Store(os.getenv("APP_DATA", "data")), vk,
-              Google(os.getenv("GOOGLE_CREDENTIALS_FILE", "token.json")), GenAPI(),
-              {int(x.strip()) for x in os.environ["VK_ALLOWED_USERS"].split(",") if x.strip()})
+    store = Store(os.getenv("APP_DATA", "data"))
+    store.seed_projects([{**p, "timezone": p.get("timezone", config.get("timezone", "Europe/Moscow"))} for p in config.get("projects", [])])
+    connections = connections_from_env(store)
+    bot = Bot(config, store, vk, ProjectGoogle(connections), GenAPI(),
+              {int(x.strip()) for x in os.environ["VK_ALLOWED_USERS"].split(",") if x.strip()}, connections)
     vk.run(bot.handle)
 
 
