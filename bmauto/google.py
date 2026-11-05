@@ -13,10 +13,16 @@ SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/a
 
 class Google:
     def __init__(self, credentials_file):
-        self.credentials, _ = google.auth.load_credentials_from_file(credentials_file, scopes=SCOPES)
+        self.credentials_file = credentials_file
+        self.credentials = None
         self.http = httpx.Client(timeout=90)
 
     def request(self, method, path, **kwargs):
+        if self.credentials is None:
+            from pathlib import Path
+            if not Path(self.credentials_file).is_file():
+                raise ValueError("Google ещё не подключён. Настройте файл авторизации GOOGLE_CREDENTIALS_FILE на сервере. Настройки проектов доступны без Google")
+            self.credentials, _ = google.auth.load_credentials_from_file(self.credentials_file, scopes=SCOPES)
         if not self.credentials.valid:
             self.credentials.refresh(Request())
         url = ("https://sheets.googleapis.com/" + path.removeprefix("sheets/")

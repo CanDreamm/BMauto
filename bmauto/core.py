@@ -56,7 +56,28 @@ class Store:
         self.db = sqlite3.connect(self.root / "state.sqlite3")
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.commit()
+
+    def seed_projects(self, projects):
+        # Legacy config is an initial import only; never overwrite bot edits.
+        with self.db:
+            for project in projects:
+                project = {**project, "revision": 1}
+                self.db.execute("INSERT OR IGNORE INTO projects VALUES (?,?)", (project["id"], json.dumps(project)))
+
+    def projects(self):
+        return {key: json.loads(body) for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")}
+
+    def save_project(self, project, expected_revision=None):
+        with self.db:
+            row = self.db.execute("SELECT body FROM projects WHERE id=?", (project["id"],)).fetchone()
+            current_revision = json.loads(row[0]).get("revision", 1) if row else None
+            if current_revision != expected_revision:
+                raise ValueError("Настройки проекта изменились. Откройте настройки заново")
+            updated = {**project, "revision": (current_revision or 0) + 1}
+            self.db.execute("INSERT OR REPLACE INTO projects VALUES (?,?)", (project["id"], json.dumps(updated)))
+        return updated
 
     def session(self, user):
         row = self.db.execute("SELECT body FROM sessions WHERE user=?", (user,)).fetchone()

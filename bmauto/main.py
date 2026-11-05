@@ -11,17 +11,20 @@ from dotenv import load_dotenv
 from .core import Store, tasks_from_rows
 from .google import Google, publish
 from .llm import GenAPI
+from .projects import ProjectMenus
 from .vk import VK
 
 
 MENU = [("Сгенерировать текст", {"a": "generate"}), ("Загрузить фотографии", {"a": "photos"}),
         ("Посмотреть черновик", {"a": "preview"}), ("Отправить в таблицу", {"a": "publish"}),
-        ("Выбрать дату", {"a": "dates"}), ("Проекты", {"a": "projects"})]
+        ("Выбрать дату", {"a": "dates"}), ("Настройки проекта", {"a": "settings"}), ("Проекты", {"a": "projects"})]
 
 
 class Bot:
     def __init__(self, config, store, vk, google, llm, allowed):
-        self.projects = {p["id"]: p for p in config["projects"]}
+        store.seed_projects([{**p, "timezone": p.get("timezone", config.get("timezone", "Europe/Moscow"))}
+                             for p in config.get("projects", [])])
+        self.project_menus = ProjectMenus(store, vk)
         self.zone = ZoneInfo(config.get("timezone", "Europe/Moscow"))
         self.store, self.vk, self.google, self.llm, self.allowed = store, vk, google, llm, allowed
 
@@ -37,7 +40,9 @@ class Bot:
         try:
             self.dispatch(user, message, session)
         except ValueError as exc:
-            self.vk.send(peer, str(exc), MENU if "task" in session else [("Проекты", {"a": "projects"})])
+            self.vk.send(peer, str(exc), MENU if "project" in session else [("Проекты", {"a": "projects"})])
+            if "wizard" in session:
+                self.project_menus.ask(user, session["wizard"])
         except Exception:
             self.vk.send(peer, "Операция не завершена. Черновик сохранён. Проверьте доступы и настройки API, затем повторите действие.")
 
@@ -47,24 +52,36 @@ class Bot:
         action = payload.get("a")
         if text.lower() in ("начать", "start", "/start", "проекты") or not session:
             action = "projects"
-        if action == "projects" or "project" not in session:
-            self.vk.send(user, "Выберите проект", [(p["name"], {"a": "project", "p": p["id"]}) for p in list(self.projects.values())[:10]]) if action != "project" else None
-            if action != "project":
-                return
+        if self.project_menus.handle(user, action, payload, text, session):
+            return
+        projects = self.store.projects()
         if action == "project":
+            if payload.get("p") not in projects:
+                raise ValueError("Проект не найден. Откройте список проектов")
             session.clear()
             session.update(project=payload["p"], last_message=message["id"])
-            action = "dates"
-        project = self.projects[session["project"]]
+            self.store.save_session(user, session)
+            self.vk.send(user, f"Проект «{projects[payload['p']]['name']}»", [
+                ("Открыть задания", {"a": "dates"}), ("Настройки проекта", {"a": "settings"}),
+                ("Проекты", {"a": "projects"})])
+            return
+        if session.get("project") not in projects:
+            self.project_menus.show_projects(user)
+            return
+        project = projects[session["project"]]
         if action == "dates":
-            tasks = tasks_from_rows(self.google.rows(project), project, datetime.now(self.zone).date())
+            zone = ZoneInfo(project.get("timezone", str(self.zone)))
+            tasks = tasks_from_rows(self.google.rows(project), project, datetime.now(zone).date())
             session["tasks"] = [{**asdict(t), "day": t.day.isoformat()} for t in tasks]
             session.pop("task", None)
             session["mode"] = None
             session["page"] = 0
+            session["project_revision"] = project.get("revision", 1)
             self.store.save_session(user, session)
             self.show_dates(user, session)
             return
+        if session.get("project_revision") != project.get("revision", 1):
+            raise ValueError("Настройки проекта изменились. Нажмите «Выбрать дату», чтобы обновить задания")
         if action == "page":
             session["page"] = max(0, int(payload["page"]))
             self.store.save_session(user, session)
@@ -81,7 +98,10 @@ class Bot:
         task = session["task"]
         # One shared draft per project/task, even if different operators select it.
         identity = {k: v for k, v in task["fields"].items() if k != project["link_column"]}
-        key = hashlib.sha256(json.dumps([project["id"], task["row"], identity], sort_keys=True).encode()).hexdigest()
+        draft_identity = [project["id"], task["row"], identity]
+        if project.get("draft_scope"):
+            draft_identity.append(project["draft_scope"])
+        key = hashlib.sha256(json.dumps(draft_identity, sort_keys=True).encode()).hexdigest()
         draft = self.store.draft(key)
         if action == "preview":
             self.vk.send(user, f"{draft['text'] or 'Текст пока не создан'}\n\nФото: {len(draft['photos'])}/9", MENU)
@@ -144,26 +164,25 @@ class Bot:
     def show_dates(self, user, session):
         page = session.get("page", 0)
         buttons = [(f"{t['day']} — {t['weekday']} (стр. {t['row']})", {"a": "task", "i": i})
-                   for i, t in enumerate(session["tasks"]) if page * 7 <= i < (page + 1) * 7]
+                   for i, t in enumerate(session["tasks"]) if page * 6 <= i < (page + 1) * 6]
         if page:
             buttons.append(("Назад", {"a": "page", "page": page - 1}))
-        if (page + 1) * 7 < len(session["tasks"]):
+        if (page + 1) * 6 < len(session["tasks"]):
             buttons.append(("Далее", {"a": "page", "page": page + 1}))
-        buttons.append(("Проекты", {"a": "projects"}))
+        buttons.extend([("Настройки проекта", {"a": "settings"}), ("Проекты", {"a": "projects"})])
         self.vk.send(user, "Выберите будущую дату" if session["tasks"] else "Будущих дат нет", buttons)
 
 
 def main():
     load_dotenv()
-    required = [k for k in ("VK_TOKEN", "VK_GROUP_ID", "VK_ALLOWED_USERS", "GOOGLE_CREDENTIALS_FILE") if not os.getenv(k)]
+    required = [k for k in ("VK_TOKEN", "VK_GROUP_ID", "VK_ALLOWED_USERS") if not os.getenv(k)]
     if required:
         raise SystemExit("Заполните переменные: " + ", ".join(required))
-    config = json.loads(Path(os.getenv("APP_CONFIG", "config.json")).read_text())
-    if len(config["projects"]) > 10:
-        raise SystemExit("Первая версия поддерживает до 10 проектов")
+    config_path = Path(os.getenv("APP_CONFIG") or "config.json")
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
     vk = VK(os.environ["VK_TOKEN"], int(os.environ["VK_GROUP_ID"]))
     bot = Bot(config, Store(os.getenv("APP_DATA", "data")), vk,
-              Google(os.environ["GOOGLE_CREDENTIALS_FILE"]), GenAPI(),
+              Google(os.getenv("GOOGLE_CREDENTIALS_FILE", "token.json")), GenAPI(),
               {int(x.strip()) for x in os.environ["VK_ALLOWED_USERS"].split(",") if x.strip()})
     vk.run(bot.handle)
 

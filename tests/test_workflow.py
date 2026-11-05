@@ -9,13 +9,6 @@ from bmauto.google import publish, word_document
 from bmauto.main import Bot
 
 
-@pytest.fixture
-def project():
-    return dict(id="test", name="Test", concept="Concept", prompt="Prompt", date_column="Дата",
-                weekday_column="День недели", link_column="Ссылка", public_read=True,
-                drive_parent_id="parent", worksheet="Sheet", spreadsheet_id="sheet")
-
-
 class FakeGoogle:
     def __init__(self):
         self.table = [["Дата", "День недели", "Задание", "Ссылка"], ["20.12.2030", "Пятница", "Текст", ""]]
@@ -167,6 +160,7 @@ def test_vk_full_flow_and_photo_limit(tmp_path, project):
 
     send(text="Начать")
     send("project", p="test")
+    send("dates")
     send("task", i=0)
     assert "Задание: Текст" in vk.messages[-1][0]
     send("generate")
