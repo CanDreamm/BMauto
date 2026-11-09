@@ -255,10 +255,10 @@ def test_assigned_member_connects_own_google_from_vk_settings(connection, monkey
     owner.send(text="3")
     member = Conversation(bot, 3)
     member.send(text="Начать")
-    assert vk.messages[-1][1] == [("Test", {"a": "project", "p": "test"})]
+    assert vk.messages[-1][1] == [("Test", {"a": "project", "p": "test"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
     member.send("project", p="test")
     member.send("settings")
-    assert vk.messages[-1][1] == [("Подключить Google", {"a": "google_connect"}), ("Мониторинг", {"a": "monitor"}), [("Назад", {"a": "project_home"})]]
+    assert vk.messages[-1][1] == [("Подключить Google", {"a": "google_connect"}), [("Назад", {"a": "project_home"})]]
     member.send("google_connect")
     member.send("google_open")
     url = vk.opened_url

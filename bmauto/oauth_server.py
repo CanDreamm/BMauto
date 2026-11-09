@@ -48,7 +48,11 @@ def make_handler(factory, monitor_service=None):
                         raise MonitorNotFound()
                     if params.get("refresh", ["0"]) not in (["0"], ["1"]):
                         raise MonitorNotFound()
-                    data = monitor_service.load(token, int(month[0]) if month[0] is not None else None, force=params.get("refresh") == ["1"])
+                    project = params.get("project", [None])
+                    if len(project) != 1 or (project[0] is not None and (not project[0] or len(project[0]) > 128)):
+                        raise MonitorNotFound()
+                    data = monitor_service.load(token, int(month[0]) if month[0] is not None else None,
+                                                force=params.get("refresh") == ["1"], project_id=project[0])
                     self.respond(200, render_monitor(data, parsed.path).encode(), "text/html; charset=utf-8")
                 except MonitorNotFound:
                     self.respond(404, render_error("Страница не найдена или ссылка больше не действует").encode(), "text/html; charset=utf-8")

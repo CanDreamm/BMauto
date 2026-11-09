@@ -144,6 +144,12 @@ class Bot:
         session = self.store.session(user) if session is None else session
         if notice:
             self.vk.send(user, notice)
+        if session.get("view") == "monitor":
+            self.project_menus.show_monitor(user)
+            return
+        if session.get("view") == "monitor_rotate" and session.get("monitor_confirmation"):
+            self.project_menus.show_monitor_rotation(user, session["monitor_confirmation"])
+            return
         project = self.store.projects().get(session.get("project"))
         if project and not self.store.can_access(project["id"], user, self.allowed):
             session = {"last_message": session.get("last_message", -1), "view": "projects"}
@@ -188,13 +194,6 @@ class Bot:
             self.project_menus.show_projects(user)
         elif session.get("view") == "settings":
             self.project_menus.show_settings(user, project, session.get("settings_page", 0))
-        elif session.get("view") == "monitor":
-            self.project_menus.show_monitor(user, project)
-        elif session.get("view") == "monitor_rotate" and session.get("monitor_confirmation"):
-            if self.store.can_manage(project["id"], user, self.allowed):
-                self.project_menus.show_monitor_rotation(user, project, session["monitor_confirmation"])
-            else:
-                self.project_menus.show_monitor(user, project)
         elif "task" in session and session.get("view") in {"task", "supplement", "photos", "text"}:
             self.vk.send(user, "Выберите действие для задания", self.task_buttons(session, project))
         elif session.get("view") == "dates" and "tasks" in session:
@@ -262,7 +261,7 @@ class Bot:
             action = "projects"
         elif text.lower() in ("меню", "/menu", "меню проекта"):
             action = "project_home" if session.get("project") else "projects"
-        if action not in {"projects", "project_page", "project", "project_new"} and session.get("project") and not self.store.can_access(session["project"], user, self.allowed):
+        if action not in {"projects", "project_page", "project", "project_new", "monitor", "monitor_open", "monitor_rotate", "monitor_rotate_confirm"} and session.get("project") and not self.store.can_access(session["project"], user, self.allowed):
             session = {"last_message": session.get("last_message", -1), "view": "projects"}
             self.store.save_session(user, session)
             raise ValueError("Нет доступа к проекту")

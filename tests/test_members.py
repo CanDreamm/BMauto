@@ -31,7 +31,7 @@ def test_invite_without_env_edit_and_filter_projects(tmp_path, project):
     chat = Conversation(bot, 3)
     chat.send(text="Начать")
     buttons = bot.vk.messages[-1][1]
-    assert buttons == [("Test", {"a": "project", "p": "test"})]
+    assert buttons == [("Test", {"a": "project", "p": "test"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
     assert "Скрытый проект" not in bot.vk.messages[-1][0]
     chat.send("project", p="test")
     assert actions(bot) == {"task", "settings", "projects"}
@@ -123,7 +123,7 @@ def test_revocation_preserves_other_project_access(tmp_path, project):
     participant.send("project", p="test")
     bot.store.remove_member("test", 1, 3, bot.allowed)
     participant.send("projects")
-    assert bot.vk.messages[-1][1] == [("Второй", {"a": "project", "p": "second"})]
+    assert bot.vk.messages[-1][1] == [("Второй", {"a": "project", "p": "second"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
     participant.send("project", p="test")
     assert "project" not in bot.store.session(3)
 
@@ -193,7 +193,7 @@ def test_every_action_rechecks_access_even_if_old_session_survives(tmp_path, pro
     member.send(action)
     assert "project" not in bot.store.session(3)
     assert not bot.google.files
-    assert actions(bot) == {"project"}
+    assert actions(bot) == {"project", "monitor"}
     assert all("Задание: Текст" not in text for text, _ in bot.vk.messages[old_count:])
 
 
@@ -224,12 +224,12 @@ def test_member_can_read_settings_but_cannot_edit(tmp_path, project):
     member = Conversation(bot, 3)
     member.send("project", p="test")
     member.send("settings")
-    assert actions(bot) == {"google_connect", "monitor", "project_home"}
+    assert actions(bot) == {"google_connect", "project_home"}
     assert "Concept" in bot.vk.messages[-1][0]
     member.send("project_edit", field="concept")
     member.send(text="Подмена концепции")
     assert bot.store.projects()["test"]["concept"] == "Concept"
-    assert actions(bot) == {"google_connect", "monitor", "project_home"}
+    assert actions(bot) == {"google_connect", "project_home"}
 
 
 @pytest.mark.parametrize("value,expected", [("123", 123), ("id123", 123),

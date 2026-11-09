@@ -112,7 +112,7 @@ def test_settings_footer_pairs_back_and_delete(tmp_path, project):
     chat.send("settings")
     rows = keyboard(bot.vk.messages[-1][1])["buttons"]
     assert [row[0]["action"]["label"] for row in rows] == [
-        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Мониторинг", "Назад"]
+        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Назад"]
     assert rows[-1][0]["color"] == "primary" and rows[-1][1]["color"] == "negative"
     assert rows[-1][1]["action"]["label"] == "Удалить проект"
 

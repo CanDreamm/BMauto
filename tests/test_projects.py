@@ -33,7 +33,7 @@ def test_create_and_restart_without_config_json(tmp_path):
     bot = bot_at(tmp_path)
     chat = Conversation(bot)
     chat.send(text="Начать")
-    assert bot.vk.messages[-1][1] == [("Создать проект", {"a": "project_new"})]
+    assert bot.vk.messages[-1][1] == [("Мой мониторинг", {"a": "monitor", "_color": "primary"}), ("Создать проект", {"a": "project_new"})]
     project = create_project(chat)
     assert project["name"] == "Авто"
     assert "spreadsheet_id" not in project

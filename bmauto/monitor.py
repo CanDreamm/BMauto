@@ -1,4 +1,4 @@
-"""Read-only project dashboard. Bearer URLs never enumerate projects."""
+"""Read-only personal dashboards scoped to current project memberships."""
 import html
 import hashlib
 import re
@@ -30,10 +30,10 @@ class MonitorUnavailable(Exception):
     pass
 
 
-def monitor_url(store, project, connections=None):
+def monitor_url(store, user, connections=None, admins=()):
     redirect = urlsplit(getattr(connections, "redirect_uri", "https://bot.itiscat.ru/oauth/google/callback"))
     origin = f"{redirect.scheme}://{redirect.netloc}"
-    return origin + "/monitor/" + store.monitor_token(project["id"])
+    return origin + "/monitor/" + store.monitor_token(user, admins)
 
 
 def month_sheets(sheets):
@@ -63,10 +63,6 @@ def monitor_rows(values, project):
                 hint = "Подготовить материалы"
             elif status == PLANNED:
                 hint = "Ожидает согласования"
-            elif status == APPROVED:
-                hint = "Готово к публикации"
-            elif status == NOT_PLANNED:
-                hint = "Материалы не были запланированы"
         rows.append({"row": number, "date": day.isoformat(), "date_label": day.strftime("%d.%m.%Y"),
                      "weekday": cells[2], "assignment": assignment, "materials": link,
                      "status": status, "tone": STATUS_CLASS.get(status, "neutral"), "hint": hint})
@@ -78,50 +74,67 @@ class MonitorService:
         self.factory, self.google_factory, self.ttl = factory, google_factory, ttl
         self.cache, self.lock = {}, threading.Lock()
 
-    def load(self, token, selected=None, force=False):
+    def load(self, token, selected=None, force=False, project_id=None):
         if not TOKEN_RE.fullmatch(token):
             raise MonitorNotFound()
         connection = google = None
         try:
             connection = self.factory()
-            project = connection.store.monitor_project(token)
-            if project is None:
+            user = connection.store.monitor_user(token)
+            if user is None:
                 raise MonitorNotFound()
+            admins = getattr(connection, "admins", ())
+            projects = connection.store.visible_projects(user, admins)
+            if project_id is not None and project_id not in projects:
+                raise MonitorNotFound()
+            project = projects.get(project_id) if project_id is not None else next(iter(projects.values()), None)
+            tabs = [{"id": p["id"], "name": p["name"]} for p in projects.values()]
+            if project is None:
+                return self.empty_data("Нет доступных проектов", "Пока вам не назначены проекты", tabs)
             key = (project["id"], project.get("revision"), project.get("google_connection_id"), project.get("spreadsheet_id"), selected)
             with self.lock:
                 cached = self.cache.get(key)
             if not force and cached and time.monotonic() - cached[0] < self.ttl:
-                return cached[1]
-            if not project.get("spreadsheet_id"):
-                raise MonitorUnavailable("Для проекта ещё не указана Google Таблица. Добавьте её в настройках бота")
-            google = self.google_factory(connection.path_for(project))
-            sheets = month_sheets(google.worksheets(project))
-            if not sheets:
-                raise MonitorUnavailable("В таблице не найдены вкладки с названиями месяцев")
-            if selected is None:
-                month = MONTHS[datetime.now(ZoneInfo("Europe/Moscow")).month - 1].casefold()
-                sheet = next((s for s in sheets if s["title"].strip().casefold() == month), sheets[-1])
-            else:
-                sheet = next((s for s in sheets if s["sheetId"] == selected), None)
-                if sheet is None:
-                    raise MonitorNotFound()
-            source = {**project, "_sheet_id": sheet["sheetId"], "worksheet": sheet["title"]}
-            rows = monitor_rows(google.rows(source), project)
-            data = {"name": project["name"], "sheets": sheets, "sheet_id": sheet["sheetId"],
-                    "month": sheet["title"].strip(), "rows": rows,
-                    "updated": datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y, %H:%M")}
-            # Rotation/deletion must also revoke requests that were waiting on Google.
-            if connection.store.monitor_project(token) is None:
+                return {**cached[1], "projects": tabs, "project_id": project["id"]}
+            try:
+                if not project.get("spreadsheet_id"):
+                    raise MonitorUnavailable("Для проекта ещё не указана Google Таблица. Добавьте её в настройках бота")
+                google = self.google_factory(connection.path_for(project))
+                sheets = month_sheets(google.worksheets(project))
+                if not sheets:
+                    raise MonitorUnavailable("В таблице не найдены вкладки с названиями месяцев")
+                if selected is None:
+                    month = MONTHS[datetime.now(ZoneInfo("Europe/Moscow")).month - 1].casefold()
+                    sheet = next((s for s in sheets if s["title"].strip().casefold() == month), sheets[-1])
+                else:
+                    sheet = next((s for s in sheets if s["sheetId"] == selected), None)
+                    if sheet is None:
+                        raise MonitorNotFound()
+                source = {**project, "_sheet_id": sheet["sheetId"], "worksheet": sheet["title"]}
+                rows = monitor_rows(google.rows(source), project)
+                data = {"name": project["name"], "sheets": sheets, "sheet_id": sheet["sheetId"],
+                        "month": sheet["title"].strip(), "rows": rows, "message": "",
+                        "updated": datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y, %H:%M")}
+            except MonitorNotFound:
+                raise
+            except Exception as exc:
+                message = str(exc) if isinstance(exc, MonitorUnavailable) else "Не удалось загрузить данные этого проекта. Проверьте подключение Google в боте"
+                data = self.empty_data(project["name"], message, tabs, project["id"])
+            # Membership, token rotation and project deletion are checked after Google too.
+            current_projects = connection.store.visible_projects(user, admins)
+            if connection.store.monitor_user(token) != user or project["id"] not in current_projects:
                 raise MonitorNotFound()
-            with self.lock:
-                now = time.monotonic()
-                self.cache = {k: v for k, v in self.cache.items() if now - v[0] < self.ttl}
-                self.cache[key] = (now, data)
-            return data
+            tabs = [{"id": p["id"], "name": p["name"]} for p in current_projects.values()]
+            if not data.get("message"):
+                with self.lock:
+                    now = time.monotonic()
+                    self.cache = {k: v for k, v in self.cache.items() if now - v[0] < self.ttl}
+                    self.cache[key] = (now, data)
+            return {**data, "projects": tabs, "project_id": project["id"]}
         except (MonitorNotFound, MonitorUnavailable):
             raise
         except Exception:
-            raise MonitorUnavailable("Не удалось загрузить данные. Проверьте подключение Google и доступ к таблице в боте") from None
+            raise MonitorUnavailable("Не удалось загрузить мониторинг. Попробуйте обновить страницу") from None
         finally:
             if google is not None and hasattr(google, "http"):
                 google.http.close()
@@ -129,15 +142,15 @@ class MonitorService:
                 connection.db.close()
                 connection.store.db.close()
 
+    @staticmethod
+    def empty_data(name, message, projects, project_id=None):
+        return {"name": name, "projects": projects, "project_id": project_id, "sheets": [],
+                "sheet_id": None, "month": "", "rows": [], "updated": "", "message": message}
+
 
 def render_monitor(data, path):
     esc = html.escape
     rows = data["rows"]
-    counters = (("Всего заданий", sum(bool(r["assignment"].strip()) for r in rows), "all"),
-                ("Нужно подготовить", sum(bool(r["assignment"].strip()) and not r["status"] for r in rows), "neutral"),
-                ("Ждут согласования", sum(r["status"] == PLANNED for r in rows), "planned"),
-                ("Вышло", sum(r["status"] == PUBLISHED for r in rows), "published"))
-    stats = "".join(f'<div class="stat {tone}"><span>{label}</span><strong>{count:02d}</strong></div>' for label, count, tone in counters)
     body = []
     for row in rows:
         status = (f'<span class="badge {row["tone"]}"><i></i>{esc(row["status"])}</span>' if row["status"]
@@ -150,20 +163,35 @@ def render_monitor(data, path):
         body.append(f'<tr class="row-{row["tone"]}"><td>{status}</td><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time></td>'
                     f'<td class="weekday">{esc(row["weekday"])}</td><td class="task"><div class="task-text">{assignment}</div>{hint}{link}</td></tr>')
     if not body:
-        body.append('<tr><td colspan="4" class="empty-table">В этом месяце пока нет строк с датами</td></tr>')
+        body.append(f'<tr><td colspan="4" class="empty-table">{esc(data.get("message") or "В этом месяце пока нет строк с датами")}</td></tr>')
     tabs = []
     for sheet in data["sheets"]:
         active = sheet["sheetId"] == data["sheet_id"]
-        url = path + "?" + urlencode({"month": sheet["sheetId"]})
+        url = path + "?" + urlencode({"project": data["project_id"], "month": sheet["sheetId"]})
         tabs.append(f'<a class="month-tab{" active" if active else ""}" href="{esc(url, quote=True)}"'
                     f'{" aria-current=page" if active else ""}>{esc(sheet["title"].strip())}</a>')
+    project_tabs = []
+    for project in data["projects"]:
+        active = project["id"] == data["project_id"]
+        url = path + "?" + urlencode({"project": project["id"]})
+        project_tabs.append(f'<a class="project-tab{" active" if active else ""}" href="{esc(url, quote=True)}"'
+                            f'{" aria-current=page" if active else ""}>{esc(project["name"])}</a>')
+    refresh = {}
+    if data["project_id"] is not None:
+        refresh["project"] = data["project_id"]
+    if data["sheet_id"] is not None:
+        refresh["month"] = data["sheet_id"]
+    refresh["refresh"] = 1
     template = Template((ASSETS / "monitor.html").read_text())
-    return template.substitute(title=esc(data["name"]), month=esc(data["month"]), updated=esc(data["updated"]),
-                               assets=ASSET_VERSION, stats=stats, rows="".join(body), tabs="".join(tabs), refresh=esc(path + "?" + urlencode({"month": data["sheet_id"], "refresh": 1}), quote=True))
+    return template.substitute(title=esc(data["name"]), month=esc(data["month"] or "Мониторинг"),
+                               updated=esc(data["updated"] or "Данные не загружены"),
+                               assets=ASSET_VERSION, projects="".join(project_tabs) or '<span class="no-projects">Проектов пока нет</span>',
+                               rows="".join(body), tabs="".join(tabs), refresh=esc(path + "?" + urlencode(refresh), quote=True))
+
 
 
 def render_error(message):
     return ('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>BMauto · Мониторинг</title><link rel="stylesheet" href="/monitor-assets/monitor.css?v={ASSET_VERSION}">'
-            '<body><main class="error-screen"><div class="brand">BM<span>auto</span></div><h1>Мониторинг недоступен</h1>'
+            '<body><main class="error-screen"><div class="brand">BMauto</div><h1>Мониторинг недоступен</h1>'
             f'<p>{html.escape(message)}</p><a class="refresh" href="">Попробовать снова ↻</a></main></body></html>')

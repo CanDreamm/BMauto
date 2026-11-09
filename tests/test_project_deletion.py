@@ -64,7 +64,7 @@ def test_delete_requires_red_confirmation_and_does_not_touch_google(tmp_path, pr
     assert "project" not in bot.store.session(1)
     assert bot.google.files == {} and bot.google.created == [] and bot.google.shared == []
     assert bot.google.table[2][3] == "Текст"
-    assert actions(bot) == {"project_new"}
+    assert actions(bot) == {"project_new", "monitor"}
     assert any("Файлы на Google Диске и данные таблицы сохранены" in text for text, _ in bot.vk.messages)
     # A legacy config cannot re-import the deleted project, even after restart.
     restarted = bot_at(tmp_path, {"projects": [project]})
@@ -138,7 +138,7 @@ def test_members_cannot_delete_even_with_forged_confirmation(tmp_path, project):
     member = Conversation(bot, 3)
     member.send("project", p="test")
     member.send("settings")
-    assert actions(bot) == {"google_connect", "monitor", "project_home"}
+    assert actions(bot) == {"google_connect", "project_home"}
     member.send("project_delete")
     assert "delete_confirmation" not in bot.store.session(3)
     session = bot.store.session(3)

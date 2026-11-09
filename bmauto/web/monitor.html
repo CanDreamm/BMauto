@@ -10,18 +10,17 @@
   <script defer src="/monitor-assets/monitor.js?v=$assets"></script>
 </head>
 <body>
-  <header class="topbar"><div class="topbar-inner"><a class="brand" href="$refresh" aria-label="Обновить мониторинг">BM<span>auto</span><b> / </b><small>Публикации</small></a><span class="read-only"><i></i>Только просмотр</span></div></header>
+  <header class="topbar"><div class="topbar-inner"><span class="brand">BMauto <span>/ Мониторинг</span></span><span class="read-only">Только просмотр</span></div></header>
+  <nav class="projects" aria-label="Проекты"><div class="projects-inner" id="project-tabs">$projects</div></nav>
   <main>
-    <section class="project-heading"><div><p class="eyebrow">МОНИТОРИНГ ПРОЕКТА</p><h1>$title</h1><p class="subtitle">Контент-план и готовность публикаций — всё на одном экране.</p></div><a class="refresh" href="$refresh"><span aria-hidden="true">↻</span> Обновить</a></section>
-    <section class="stats" id="stats" aria-label="Сводка месяца">$stats</section>
+    <div class="project-heading"><h1 id="project-title">$title</h1><a class="refresh" href="$refresh">Обновить</a></div>
     <section class="plan" aria-labelledby="month-title">
-      <div class="plan-heading"><div><h2 id="month-title">$month</h2><span class="plan-caption">План публикаций</span></div><div class="update-status" id="update-status" role="status"><i></i>Обновлено <time>$updated</time></div></div>
+      <div class="plan-heading"><h2 id="month-title">$month</h2><div class="update-status" id="update-status" role="status">$updated</div></div>
       <p class="scroll-note">Прокрутите таблицу вправо, чтобы увидеть задания →</p>
       <div class="table-scroll"><table><thead><tr><th scope="col">Статус</th><th scope="col">Дата</th><th scope="col">День</th><th scope="col">Задание</th></tr></thead><tbody id="plan-rows">$rows</tbody></table></div>
-      <div class="table-note"><span>Изменения из Google Таблицы появляются автоматически</span><span>Обновление раз в минуту</span></div>
     </section>
-    <p class="page-note">Чтобы изменить задание или подготовить материалы, откройте проект в боте.</p>
+    <p class="page-note">Данные обновляются раз в минуту</p>
   </main>
-  <nav class="months" aria-label="Месяцы контент-плана"><div class="months-inner"><span class="tabs-caption">МЕСЯЦ</span>$tabs</div></nav>
+  <nav class="months" aria-label="Месяцы контент-плана"><div class="months-inner" id="month-tabs">$tabs</div></nav>
 </body>
 </html>

@@ -117,7 +117,7 @@ class Store:
         (self.root / "state.sqlite3").chmod(0o600)
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS monitor_links (project_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS monitor_members (user_id INTEGER PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
         self.db.execute("CREATE TABLE IF NOT EXISTS vk_chat_messages (peer INTEGER NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(peer,key))")
         self.db.execute("CREATE TABLE IF NOT EXISTS handled_messages (user INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(user,event))")
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
@@ -157,18 +157,18 @@ class Store:
         return {key: project for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")
                 if not (project := json.loads(body)).get("deleted_at")}
 
-    def monitor_token(self, project_id, rotate=False):
-        if project_id not in self.projects():
-            raise ValueError("Проект не найден")
+    def monitor_token(self, user, admins=(), rotate=False):
+        if not isinstance(user, int) or user <= 0 or not self.can_enter(user, admins):
+            raise ValueError("Нет доступных проектов")
         with self.db:
             if rotate:
-                self.db.execute("DELETE FROM monitor_links WHERE project_id=?", (project_id,))
-            self.db.execute("INSERT OR IGNORE INTO monitor_links VALUES (?,?)", (project_id, secrets.token_urlsafe(32)))
-            return self.db.execute("SELECT token FROM monitor_links WHERE project_id=?", (project_id,)).fetchone()[0]
+                self.db.execute("DELETE FROM monitor_members WHERE user_id=?", (user,))
+            self.db.execute("INSERT OR IGNORE INTO monitor_members VALUES (?,?)", (user, secrets.token_urlsafe(32)))
+            return self.db.execute("SELECT token FROM monitor_members WHERE user_id=?", (user,)).fetchone()[0]
 
-    def monitor_project(self, token):
-        row = self.db.execute("SELECT project_id FROM monitor_links WHERE token=?", (token,)).fetchone()
-        return self.projects().get(row[0]) if row else None
+    def monitor_user(self, token):
+        row = self.db.execute("SELECT user_id FROM monitor_members WHERE token=?", (token,)).fetchone()
+        return row[0] if row else None
 
     def save_project(self, project, expected_revision=None, owner=None):
         with self.db:
@@ -223,7 +223,11 @@ class Store:
         return project_id in self.projects() and (user in admins or self.members(project_id).get(user) == 'owner')
 
     def visible_projects(self, user, admins):
-        return {key: p for key, p in self.projects().items() if self.can_access(key, user, admins)}
+        projects = self.projects()
+        if user in admins:
+            return projects
+        assigned = {row[0] for row in self.db.execute("SELECT project_id FROM project_members WHERE user_id=?", (user,))}
+        return {key: project for key, project in projects.items() if key in assigned}
 
     def can_enter(self, user, admins):
         return user in admins or self.db.execute("SELECT 1 FROM project_members WHERE user_id=? LIMIT 1", (user,)).fetchone() is not None

@@ -140,7 +140,7 @@ def test_settings_only_show_essential_fields_without_pages(tmp_path, project):
     fields = {p["field"] for row in rows for _, p in row if p["a"] == "project_edit"}
     assert fields == {"concept", "prompt", "spreadsheet_id"}
     assert "settings" not in actions(bot)
-    assert len(rows) == 7
+    assert len(rows) == 6
 
 
 def test_publication_available_without_manual_parent_folder(tmp_path, project):

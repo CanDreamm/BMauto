@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from bmauto.core import Store, append_materials
-from bmauto.monitor import MonitorNotFound, MonitorService, MonitorUnavailable, monitor_rows, monitor_url, render_monitor
+from bmauto.monitor import MonitorNotFound, MonitorService, monitor_rows, render_monitor
 from bmauto.oauth_server import make_handler
 from test_projects import Conversation, actions, bot_at
 
@@ -26,7 +26,8 @@ ROWS = [['План'], HEADERS,
 def monitor(tmp_path, project):
     store = Store(tmp_path)
     store.seed_projects([project])
-    token = store.monitor_token(project['id'])
+    store.ensure_owners(1)
+    token = store.monitor_token(1)
     calls = []
     def factory():
         return SimpleNamespace(store=Store(tmp_path), db=sqlite3.connect(':memory:'), path_for=lambda p: p['id'])
@@ -42,15 +43,17 @@ def monitor(tmp_path, project):
     return store, token, MonitorService(factory, Reader), calls
 
 
-def test_tokens_are_unique_persistent_and_do_not_change_project_revision(tmp_path, project):
+def test_personal_tokens_are_unique_persistent_and_do_not_change_project_revision(tmp_path, project):
     store = Store(tmp_path)
-    store.seed_projects([project, {**project, 'id': 'other'}])
-    first = store.monitor_token(project['id'])
-    assert len(first) == 43 and first != store.monitor_token('other')
-    assert Store(tmp_path).monitor_token(project['id']) == first
+    store.seed_projects([project])
+    store.ensure_owners(1)
+    store.add_member(project['id'], 1, 3, {1})
+    first = store.monitor_token(1)
+    assert len(first) == 43 and first != store.monitor_token(3)
+    assert Store(tmp_path).monitor_token(1) == first
     assert store.projects()[project['id']]['revision'] == 1
-    assert store.monitor_project(first)['id'] == project['id']
-    assert store.monitor_project('invalid') is None
+    assert store.monitor_user(first) == 1
+    assert store.monitor_user('invalid') is None
 
 
 def test_month_data_and_cache_are_read_only(monitor):
@@ -80,7 +83,7 @@ def test_invalid_or_other_month_does_not_disclose_project(monitor):
 def test_rotation_and_deletion_revoke_even_cached_pages(monitor, tmp_path):
     store, token, service, _ = monitor
     service.load(token, 0)
-    new_token = store.monitor_token('test', rotate=True)
+    new_token = store.monitor_token(1, rotate=True)
     assert new_token != token
     with pytest.raises(MonitorNotFound):
         service.load(token, 0)
@@ -88,15 +91,16 @@ def test_rotation_and_deletion_revoke_even_cached_pages(monitor, tmp_path):
     store.ensure_owners(1)
     store.delete_project('test', 1, {1}, store.projects()['test']['revision'])
     with pytest.raises(MonitorNotFound):
-        service.load(new_token, 0)
+        service.load(new_token, 0, project_id='test')
+    assert service.load(new_token)['projects'] == []
 
 
 def test_each_project_uses_its_own_google_connection(monitor):
     store, token, service, calls = monitor
-    store.save_project({'id': 'other', 'name': 'Other', 'spreadsheet_id': 'other-sheet'})
-    other = store.monitor_token('other')
-    service.load(token, 0)
-    service.load(other, 0)
+    store.save_project({'id': 'other', 'name': 'Other', 'spreadsheet_id': 'other-sheet'}, owner=1)
+    service.load(token, 0, project_id='test')
+    data = service.load(token, 0, project_id='other')
+    assert [p['id'] for p in data['projects']] == ['test', 'other']
     assert ('credentials', 'test') in calls and ('credentials', 'other') in calls
     assert ('rows', 'test', 0) in calls and ('rows', 'other', 0) in calls
 
@@ -105,9 +109,11 @@ def test_html_escapes_project_and_assignment_content_and_preserves_lines(monitor
     _, token, service, _ = monitor
     data = service.load(token, 0)
     data['name'] = '<script>private</script>'
+    data['projects'][0]['name'] = '<img src=external onerror=alert(1)>'
     data['rows'][0]['assignment'] = '<img src=x onerror=alert(1)>\nВторая строка'
     page = render_monitor(data, '/monitor/' + token)
     assert '<script>private</script>' not in page and '&lt;script&gt;private&lt;/script&gt;' in page
+    assert '<img src=external' not in page and '&lt;img src=external onerror=alert(1)&gt;' in page
     assert '<img src=x' not in page and '&lt;img src=x onerror=alert(1)&gt;' in page
     assert '\nВторая строка' in page
     assert all(label in page for label in ['Статус', 'Дата', 'День', 'Задание', 'Ноябрь', 'Декабрь'])
@@ -154,32 +160,31 @@ def test_header_row_three_and_only_columns_A_through_D_are_used():
     assert result[0]['assignment'] == 'Задание' and 'Не показывать' not in str(result)
 
 
-def test_members_can_get_monitor_link_but_only_owner_can_rotate(tmp_path, project):
+def test_each_member_gets_and_rotates_only_their_own_link(tmp_path, project):
     bot = bot_at(tmp_path, {'projects': [project]})
     bot.store.add_member(project['id'], 1, 3, bot.allowed)
     owner = Conversation(bot)
-    owner.send('project', p=project['id'])
-    owner.send('settings')
+    owner.send('projects')
     assert 'monitor' in actions(bot)
     owner.send('monitor')
-    original = bot.store.monitor_token(project['id'])
+    original = bot.store.monitor_token(1)
     assert '/monitor/' + original in bot.vk.messages[-1][0]
     owner.send('monitor_open')
     assert bot.vk.opened_url == 'https://bot.itiscat.ru/monitor/' + original
     member = Conversation(bot, 3)
-    member.send('project', p=project['id'])
     member.send('monitor')
-    assert 'monitor_rotate' not in actions(bot)
+    member_token = bot.store.monitor_token(3)
+    assert member_token != original
+    assert 'monitor_rotate' in actions(bot)
     member.send('monitor_rotate')
-    assert bot.store.monitor_token(project['id']) == original
-    owner.send('monitor_rotate')
-    confirmation = bot.store.session(1)['monitor_confirmation']['token']
-    owner.send('monitor_rotate_confirm', token=confirmation)
-    assert bot.store.monitor_token(project['id']) != original
-    assert bot.store.monitor_project(original) is None
-    current = bot.store.monitor_token(project['id'])
-    owner.send('monitor_rotate_confirm', token=confirmation)
-    assert bot.store.monitor_token(project['id']) == current
+    confirmation = bot.store.session(3)['monitor_confirmation']['token']
+    member.send('monitor_rotate_confirm', token=confirmation)
+    assert bot.store.monitor_token(3) != member_token
+    assert bot.store.monitor_user(member_token) is None
+    assert bot.store.monitor_token(1) == original
+    current = bot.store.monitor_token(3)
+    member.send('monitor_rotate_confirm', token=confirmation)
+    assert bot.store.monitor_token(3) == current
 
 
 def test_upstream_errors_do_not_expose_google_urls_or_credentials(monitor):
@@ -188,9 +193,9 @@ def test_upstream_errors_do_not_expose_google_urls_or_credentials(monitor):
         def __init__(self, path):
             raise RuntimeError('private credentials /secret/token.json and signed-url')
     service.google_factory = Failing
-    with pytest.raises(MonitorUnavailable) as error:
-        service.load(token, 0)
-    assert '/secret' not in str(error.value) and 'signed-url' not in str(error.value)
+    data = service.load(token, 0)
+    assert '/secret' not in str(data) and 'signed-url' not in str(data)
+    assert data['message'] and data['projects'] == [{'id': 'test', 'name': 'Test'}]
 
 
 def test_revocation_while_waiting_for_google_does_not_return_data(monitor):
@@ -201,7 +206,7 @@ def test_revocation_while_waiting_for_google_does_not_return_data(monitor):
         rows = google.rows
         def read(source):
             result = rows(source)
-            store.monitor_token('test', rotate=True)
+            store.monitor_token(1, rotate=True)
             return result
         google.rows = read
         return google
@@ -236,3 +241,112 @@ def test_manual_refresh_reads_fresh_google_data_even_inside_cache_window(monitor
     assert len(calls) == count
     assert request(service, '/monitor/' + token + '?month=0&refresh=1')[0] == 200
     assert len(calls) > count
+
+
+def test_personal_link_only_lists_member_projects_and_blocks_other_project_ids(monitor):
+    store, _, service, calls = monitor
+    store.save_project({'id': 'private', 'name': 'Чужой проект', 'spreadsheet_id': 'private-sheet'}, owner=2)
+    store.add_member('test', 1, 3, {1})
+    member_token = store.monitor_token(3)
+    owner_token = store.monitor_token(2)
+    assert service.load(owner_token, 0)['name'] == 'Чужой проект'
+    data = service.load(member_token, 0)
+    assert data['projects'] == [{'id': 'test', 'name': 'Test'}]
+    assert data['project_id'] == 'test'
+    count = len(calls)
+    with pytest.raises(MonitorNotFound):
+        service.load(member_token, 0, project_id='private')
+    assert len(calls) == count
+    assert 'Чужой проект' not in render_monitor(data, '/monitor/' + member_token)
+
+
+def test_revoked_project_is_hidden_even_when_data_is_cached(monitor):
+    store, _, service, _ = monitor
+    store.save_project({'id': 'second', 'name': 'Второй', 'spreadsheet_id': 'second-sheet'}, owner=1)
+    store.add_member('test', 1, 3, {1})
+    store.add_member('second', 1, 3, {1})
+    token = store.monitor_token(3)
+    assert len(service.load(token, 0, project_id='test')['projects']) == 2
+    store.remove_member('test', 1, 3, {1})
+    with pytest.raises(MonitorNotFound):
+        service.load(token, 0, project_id='test')
+    data = service.load(token, 0)
+    assert data['project_id'] == 'second'
+    assert data['projects'] == [{'id': 'second', 'name': 'Второй'}]
+    store.remove_member('second', 1, 3, {1})
+    empty = service.load(token)
+    assert empty['projects'] == [] and empty['rows'] == []
+    assert 'Пока вам не назначены проекты' in empty['message']
+
+
+def test_new_assignments_appear_without_changing_personal_link(monitor):
+    store, token, service, _ = monitor
+    assert len(service.load(token, 0)['projects']) == 1
+    store.save_project({'id': 'new', 'name': 'Новый', 'spreadsheet_id': 'new-sheet'}, owner=2)
+    store.add_member('new', 2, 1, {2})
+    assert store.monitor_token(1) == token
+    data = service.load(token, 0)
+    assert [p['id'] for p in data['projects']] == ['test', 'new']
+    assert service.load(token, 0, project_id='new')['name'] == 'Новый'
+
+
+def test_old_project_links_do_not_become_personal_links(monitor):
+    store, token, service, _ = monitor
+    legacy = 'Z' * 43
+    with store.db:
+        store.db.execute('CREATE TABLE monitor_links (project_id TEXT PRIMARY KEY, token TEXT UNIQUE)')
+        store.db.execute('INSERT INTO monitor_links VALUES (?,?)', ('test', legacy))
+    with pytest.raises(MonitorNotFound):
+        service.load(legacy, 0)
+    assert service.load(token, 0)['name'] == 'Test'
+
+
+def test_invalid_project_query_and_cross_project_month_ids_are_rejected(monitor):
+    _, token, service, _ = monitor
+    path = '/monitor/' + token
+    assert request(service, path + '?project=private')[0] == 404
+    assert request(service, path + '?project=test&project=private')[0] == 404
+    assert request(service, path + '?project=test&month=9')[0] == 404
+    assert request(service, path + '?project=test&month=0')[0] == 200
+
+
+def test_failed_google_connection_does_not_hide_other_project_tabs(monitor):
+    store, token, service, _ = monitor
+    store.save_project({'id': 'unconfigured', 'name': 'Без таблицы'}, owner=1)
+    data = service.load(token, project_id='unconfigured')
+    assert data['message'] and data['rows'] == []
+    assert [p['id'] for p in data['projects']] == ['test', 'unconfigured']
+    page = render_monitor(data, '/monitor/' + token)
+    assert '?project=test' in page and 'Без таблицы' in page
+    assert service.load(token, 0, project_id='test')['rows']
+
+
+def test_membership_revoked_while_google_is_loading_is_checked_again(monitor):
+    store, _, service, _ = monitor
+    store.add_member('test', 1, 3, {1})
+    token = store.monitor_token(3)
+    original = service.google_factory
+    def reader(path):
+        google = original(path)
+        rows = google.rows
+        def read(source):
+            result = rows(source)
+            store.remove_member('test', 1, 3, {1})
+            return result
+        google.rows = read
+        return google
+    service.google_factory = reader
+    with pytest.raises(MonitorNotFound):
+        service.load(token, 0, project_id='test')
+    assert not service.cache
+
+
+def test_personal_monitor_root_menu_stays_within_vk_keyboard_limit(tmp_path, project):
+    from bmauto.vk import keyboard
+    bot = bot_at(tmp_path, {'projects': [{**project, 'id': str(i), 'name': f'Проект {i}'} for i in range(24)]})
+    chat = Conversation(bot)
+    for page in range(4):
+        chat.send('project_page', page=page)
+        buttons = keyboard(bot.vk.messages[-1][1])['buttons']
+        assert len(buttons) <= 10
+        assert 'monitor' in actions(bot)
