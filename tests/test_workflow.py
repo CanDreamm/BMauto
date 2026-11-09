@@ -157,6 +157,9 @@ class FakeVK:
     def send(self, user, text, buttons=None):
         self.messages.append((text, buttons))
 
+    def full_photo_message(self, message):
+        return message
+
     def download_photo(self, url):
         return b"\xff\xd8image"
 

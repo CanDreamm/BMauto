@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import secrets
@@ -5,6 +6,24 @@ import time
 from urllib.parse import urlsplit
 
 import httpx
+
+
+def photo_size(photo):
+    sizes = photo.get("sizes") or []
+    if photo.get("orig_photo", {}).get("url"):
+        sizes = [*sizes, photo["orig_photo"]]
+    if not sizes:
+        raise ValueError("ВК не передал адрес изображения")
+    return max(sizes, key=lambda s: s.get("width", 0) * s.get("height", 0))
+
+
+def photo_identity(photo):
+    owner, number = photo.get("owner_id"), photo.get("id")
+    if isinstance(owner, int) and owner != 0 and isinstance(number, int) and number > 0:
+        return f"{owner}_{number}"
+    # Temporary VK photos can all have owner_id/id=0. Never collapse them by ID.
+    source = photo_size(photo)["url"]
+    return "source_" + hashlib.sha256(source.encode()).hexdigest()
 
 
 def photo_format(content):
@@ -58,6 +77,34 @@ class VK:
             if buttons is not None and i == len(chunks) - 1:
                 args["keyboard"] = json.dumps(keyboard(buttons), ensure_ascii=False)
             self.call("messages.send", **args)
+
+    def full_photo_message(self, message):
+        """Long Poll can supply incomplete photo metadata; re-read the message."""
+        lookups = []
+        if message.get("conversation_message_id"):
+            lookups.append(("messages.getByConversationMessageId", {
+                "peer_id": message["peer_id"], "conversation_message_ids": message["conversation_message_id"]}))
+        if message.get("id", 0) > 0:
+            lookups.append(("messages.getById", {"message_ids": message["id"]}))
+        incoming_count = sum(a.get("type") == "photo" for a in message.get("attachments", []))
+        for method, arguments in lookups:
+            try:
+                result = self.call(method, **arguments)
+                for item in result.get("items", []):
+                    if item.get("peer_id") != message["peer_id"] or item.get("from_id") != message["from_id"]:
+                        continue
+                    same = (item.get("conversation_message_id") == message.get("conversation_message_id")
+                            if message.get("conversation_message_id") else item.get("id") == message.get("id"))
+                    count = sum(a.get("type") == "photo" for a in item.get("attachments", []))
+                    if same and count >= incoming_count:
+                        return {**message, "attachments": item["attachments"]}
+            except (httpx.HTTPError, ValueError, KeyError):
+                # API errors and signed image URLs must not be logged verbatim.
+                continue
+        if lookups:
+            print("Не удалось перечитать фотографии сообщения ВК; используются вложения Long Poll.", flush=True)
+            return {**message, "_photo_lookup_failed": True}
+        return message
 
     def resolve_user(self, value):
         value = value.strip()

@@ -15,7 +15,7 @@ from .members import MemberMenus
 from .oauth import GoogleMenus, ProjectGoogle
 from .oauth_server import connections_from_env
 from .projects import ProjectMenus
-from .vk import VK, photo_format
+from .vk import VK, photo_format, photo_identity, photo_size
 from .statuses import APPROVED, EXPIRED, PLANNED, SENT
 
 
@@ -180,12 +180,18 @@ class Bot:
                 self.vk.send(user, "У вас нет доступных проектов. Обратитесь к владельцу", [])
             return
         session = self.store.session(user)
+        has_photos = any(a.get("type") == "photo" for a in message.get("attachments", []))
+        if has_photos:
+            message = self.vk.full_photo_message(message)
         if message.get("conversation_message_id"):
             event = "conversation:" + str(message["conversation_message_id"])
         elif message.get("id", 0) > 0:
             event = "id:" + str(message["id"])
         else:
             event = "content:" + hashlib.sha256(json.dumps(message, sort_keys=True).encode()).hexdigest()
+        if has_photos:
+            # A later delivery of the same VK message can contain additional photos.
+            event += ":photos:" + hashlib.sha256(json.dumps(message.get("attachments", []), sort_keys=True).encode()).hexdigest()
         if self.store.message_handled(user, event):
             return
         session["last_message"] = max(message.get("id", 0), session.get("last_message", -1))
@@ -348,35 +354,56 @@ class Bot:
             self.vk.send(user, draft["text"], self.task_buttons(session, project))
             return
         if session.get("mode") == "photos" or (not action and session.get("view") == "task" and any(a.get("type") == "photo" for a in message.get("attachments", []))):
-            photos = [a["photo"] for a in message.get("attachments", []) if a["type"] == "photo"]
+            received = [a["photo"] for a in message.get("attachments", []) if a["type"] == "photo"]
             known = {p["id"] for p in draft["photos"]}
-            photos = {f"{p['owner_id']}_{p['id']}": p for p in photos}
+            photos = {photo_identity(p): p for p in received}
             photos = {k: p for k, p in photos.items() if k not in known}
-            if len(draft["photos"]) + len(photos) > 9:
+            legacy_temporary = any("0" in p["id"].split("_") for p in draft["photos"])
+            if len(draft["photos"]) + len(photos) > 9 and not legacy_temporary:
                 raise ValueError("Не более 9 фотографий. Эта партия не сохранена")
             if not photos:
                 raise ValueError("Прикрепите новые фотографии как фото ВК")
             directory = self.store.root / key
             directory.mkdir(exist_ok=True)
             failed = 0
+            # Recover batches previously collapsed under IDs such as 1_0 / 0_0.
+            temporary_hashes = set()
+            for saved in draft["photos"]:
+                if saved["id"].startswith("source_") or "0" in saved["id"].split("_"):
+                    path = self.store.root / saved["path"]
+                    if path.is_file():
+                        temporary_hashes.add(hashlib.sha256(path.read_bytes()).hexdigest())
+            previous_temporary_hashes = set(temporary_hashes)
+            pending = []
             for photo_id, photo in photos.items():
                 try:
-                    size = max(photo["sizes"], key=lambda s: s.get("width", 0) * s.get("height", 0))
+                    size = photo_size(photo)
                     content = self.vk.download_photo(size["url"])
                     extension, mime = photo_format(content)
                 except Exception:
                     failed += 1
                     continue
+                fingerprint = hashlib.sha256(content).hexdigest()
+                if fingerprint in previous_temporary_hashes or (photo_id.startswith("source_") and fingerprint in temporary_hashes):
+                    continue
+                pending.append((photo_id, content, extension, mime))
+                if photo_id.startswith("source_"):
+                    temporary_hashes.add(fingerprint)
+            if len(draft["photos"]) + len(pending) > 9:
+                raise ValueError("Не более 9 фотографий. Эта партия не сохранена")
+            for photo_id, content, extension, mime in pending:
                 filename = directory / f"{photo_id}.{extension}"
                 filename.write_bytes(content)
                 draft["photos"].append({"id": photo_id, "path": str(filename.relative_to(self.store.root)), "extension": extension, "mime": mime})
                 draft["dirty"] = True
                 self.store.save_draft(key, draft)
-            notice = f"Сохранено {len(draft['photos'])}/9 фото"
+            notice = f"Получено от ВК: {len(received)} фото. Сохранено {len(draft['photos'])}/9 фото"
             if failed:
                 notice += f". Не удалось скачать: {failed}. Пришлите их повторно; сохранённые фото не дублируются."
+            if message.get("_photo_lookup_failed"):
+                notice += ". Не удалось проверить полный список вложений ВК. Пришлите сообщение повторно."
             self.vk.send(user, notice, self.task_buttons(session, project))
-            return False if failed else None
+            return False if failed or message.get("_photo_lookup_failed") else None
         raise ValueError("Выберите действие кнопкой меню")
 
     def show_dates(self, user, session):
