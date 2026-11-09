@@ -6,13 +6,15 @@ from .core import DEFAULT_COLUMNS, assignment_cell, assignment_from_task, parse_
 
 PLANNED = "Запланировано"
 EXPIRED = "Дата прошла"
-SENT = "Материалы отправлены"
+SENT = PLANNED
+EMPTY = ""
 APPROVED = "Согласовано"
 RULE_MARKER = "BMauto:status:v1"
 COLORS = {EXPIRED: {"red": .85, "green": .85, "blue": .85},
           SENT: {"red": 1, "green": .9, "blue": .6},
           APPROVED: {"red": .71, "green": .84, "blue": .66},
-          PLANNED: {"red": 1, "green": 1, "blue": 1}}
+          EMPTY: {"red": 1, "green": 1, "blue": 1}}
+LEGACY_COLORS = {"Материалы отправлены": COLORS[SENT], PLANNED: COLORS[EMPTY]}
 
 
 def status_day(value):
@@ -24,16 +26,18 @@ def status_day(value):
 def publication_status(day, description, current, today):
     if current == APPROVED:
         return APPROVED
+    if not assignment_cell(description)[1]:
+        return EMPTY
     if day < today:
         return EXPIRED
-    return SENT if assignment_cell(description)[1] else PLANNED
+    return PLANNED
 
 
 def rules_for(sheet_id, header_row):
     return [{"ranges": [{"sheetId": sheet_id, "startRowIndex": header_row,
                          "startColumnIndex": 0, "endColumnIndex": 1}],
-             "booleanRule": {"condition": {"type": "TEXT_EQ", "values": [
-                 {"userEnteredValue": label}]},
+             "booleanRule": {"condition": ({"type": "TEXT_EQ", "values": [
+                 {"userEnteredValue": label}]} if label else {"type": "BLANK"}),
                  "format": {"backgroundColor": color}}} for label, color in COLORS.items()]
 
 
@@ -42,11 +46,13 @@ def is_our_rule(rule):
     values = condition.get("values", [])
     legacy = any(RULE_MARKER in str(value.get("userEnteredValue", "")) for value in values)
     color = rule.get("booleanRule", {}).get("format", {}).get("backgroundColor", {})
-    expected = COLORS.get(values[0].get("userEnteredValue"), {}) if len(values) == 1 else {}
-    current = (condition.get("type") == "TEXT_EQ" and len(values) == 1 and
-               values[0].get("userEnteredValue") in COLORS and bool(rule.get("ranges")) and
+    label = values[0].get("userEnteredValue") if len(values) == 1 else None
+    candidates = ([COLORS[EMPTY]] if condition.get("type") == "BLANK" else
+                  [mapping[label] for mapping in (COLORS, LEGACY_COLORS) if label in mapping]
+                  if condition.get("type") == "TEXT_EQ" else [])
+    current = (bool(rule.get("ranges")) and
                all(r.get("startColumnIndex", 0) == 0 and r.get("endColumnIndex") == 1 for r in rule["ranges"]) and
-               all(abs(color.get(channel, 0) - expected.get(channel, 0)) < .01 for channel in ("red", "green", "blue")))
+               any(all(abs(color.get(channel, 0) - expected.get(channel, 0)) < .01 for channel in ("red", "green", "blue")) for expected in candidates))
     return legacy or current
 
 
@@ -62,7 +68,7 @@ def format_updates(sheet, header):
 
 
 def cell_update(sheet_id, row, value, color=None):
-    cell = {"userEnteredValue": {"formulaValue" if value.startswith("=") else "stringValue": value}}
+    cell = {"userEnteredValue": {"stringValue": value}} if value else {}
     fields = "userEnteredValue"
     if color is not None:
         cell["userEnteredFormat"] = {"backgroundColorStyle": {"rgbColor": color}}

@@ -460,7 +460,7 @@ class Bot:
                 label = f"{datetime.fromisoformat(task['day']):%d.%m.%Y} — {task['weekday']}"
                 if task.get("status") == APPROVED:
                     label = "🟢 " + label
-                elif task.get("status") == SENT or task.get("material_url"):
+                elif task.get("material_url"):
                     label = "🟡 " + label
                 if days.count(task["day"]) > 1:
                     label += f" · {task['row']}"

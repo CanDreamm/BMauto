@@ -5,7 +5,7 @@ import pytest
 
 from bmauto.core import Store, append_materials, tasks_from_rows
 from bmauto.google import publish
-from bmauto.statuses import APPROVED, COLORS, EXPIRED, SENT, StatusSheets, is_our_rule, publication_status, PLANNED
+from bmauto.statuses import APPROVED, COLORS, EXPIRED, SENT, StatusSheets, is_our_rule, publication_status, PLANNED, EMPTY
 from bmauto.vk import keyboard
 from test_draft_editing import selected_bot
 from test_projects import Conversation, actions
@@ -45,8 +45,8 @@ class Sheets(StatusSheets):
                 update = request["updateCells"]
                 cell = update["range"]
                 assert cell["startColumnIndex"] == 0 and cell["endColumnIndex"] == 1
-                value = update["rows"][0]["values"][0]["userEnteredValue"]
-                self.tables[cell["sheetId"]][cell["startRowIndex"]][0] = next(iter(value.values()))
+                value = update["rows"][0]["values"][0].get("userEnteredValue", {})
+                self.tables[cell["sheetId"]][cell["startRowIndex"]][0] = next(iter(value.values()), "")
             elif "unmergeCells" in request:
                 merge = request["unmergeCells"]["range"]
                 self.meta[merge["sheetId"]]["merges"].remove(merge)
@@ -73,7 +73,7 @@ def test_install_live_statuses_only_in_A_preserves_approvals_and_other_cells(pro
     google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
     rows = google.tables[0]
     assert rows[header - 1][0] == "Статус"
-    assert rows[header][0] == PLANNED
+    assert rows[header][0] == EMPTY
     assert rows[header + 1][0] == APPROVED
     assert rows[header + 2] == before[header + 2]
     assert [row[1:] for row in rows] == [row[1:] for row in before]
@@ -96,7 +96,7 @@ def test_status_priority_preserves_approval_and_detects_expired_and_sent():
     assert publication_status(date(2026, 11, 8), "", APPROVED, today) == APPROVED
     assert publication_status(date(2026, 11, 8), append_materials("Текст", URL), SENT, today) == EXPIRED
     assert publication_status(date(2026, 11, 10), append_materials("Текст", URL), "#ERROR!", today) == SENT
-    assert publication_status(today, "Текст", "#ERROR!", today) == PLANNED
+    assert publication_status(today, "Текст", "#ERROR!", today) == EMPTY
 
 
 @pytest.mark.parametrize("value", [46332, "06.01.2030", "2030-01-06", "06/01/2030"])
@@ -104,7 +104,7 @@ def test_formatted_dates_and_native_serial_dates_get_statuses(project, value):
     google = Sheets()
     google.tables[0][2][1] = value
     google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
-    assert google.tables[0][2][0] == PLANNED
+    assert google.tables[0][2][0] == EMPTY
 
 
 def test_settings_footer_pairs_back_and_delete(tmp_path, project):
@@ -125,7 +125,7 @@ def test_sync_all_months_by_sheet_id_and_replaces_old_owned_rules(project):
     old["booleanRule"]["condition"] = {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=N("BMauto:status:v1")=0'}]}
     google.meta[0]["conditionalFormats"].insert(0, old)
     google.sync_statuses(project, [{"sheetId": 0, "title": "ноябрь"}, {"sheetId": 8, "title": "Октябрь"}])
-    assert google.tables[0][2][0] == google.tables[8][2][0] == EXPIRED
+    assert google.tables[0][2][0] == google.tables[8][2][0] == EMPTY
     assert len(google.meta[0]["conditionalFormats"]) == 5
     assert len(google.meta[8]["conditionalFormats"]) == 4
 
@@ -252,10 +252,11 @@ def test_russian_locale_does_not_require_any_formulas(project):
     google = Sheets()
     google.locale = 'ru_RU'
     google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
-    assert google.tables[0][2][0] == PLANNED
+    assert google.tables[0][2][0] == EMPTY
     assert not google.tables[0][2][0].startswith('=')
     assert all(rule['booleanRule']['condition']['type'] == 'TEXT_EQ'
-               for rule in google.meta[0]['conditionalFormats'][:4])
+               for rule in google.meta[0]['conditionalFormats'][:3])
+    assert google.meta[0]['conditionalFormats'][3]['booleanRule']['condition'] == {'type': 'BLANK'}
     google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
     assert len(google.writes) == 1
 
@@ -269,7 +270,8 @@ def test_old_or_displaced_color_rules_are_repaired_without_touching_other_channe
     google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
     assert len(google.meta[0]['conditionalFormats']) == 5
     assert all(rule['booleanRule']['condition']['type'] == 'TEXT_EQ'
-               for rule in google.meta[0]['conditionalFormats'][:4])
+               for rule in google.meta[0]['conditionalFormats'][:3])
+    assert google.meta[0]['conditionalFormats'][3]['booleanRule']['condition'] == {'type': 'BLANK'}
 
 
 def test_sending_materials_writes_literal_status_and_yellow_fill():
@@ -313,3 +315,26 @@ def test_background_refresh_runs_at_startup_and_after_date_changes(tmp_path, pro
     bot._status_retry_at = 0
     bot.refresh_statuses()
     assert calls == [date(2026, 11, 5), date(2026, 11, 6)]
+
+
+def test_old_planned_without_link_is_cleared_and_linked_rows_become_planned(project):
+    google = Sheets()
+    google.tables[0][2][0] = PLANNED
+    google.tables[0].append(['Материалы отправлены', '10.11.2026', 'Вторник', append_materials('Задание', URL), 'Другой канал'])
+    old_rule = {'ranges': [{'sheetId': 0, 'startRowIndex': 2, 'startColumnIndex': 0, 'endColumnIndex': 1}],
+                'booleanRule': {'condition': {'type': 'TEXT_EQ', 'values': [{'userEnteredValue': PLANNED}]},
+                                'format': {'backgroundColor': COLORS[EMPTY]}}}
+    google.meta[0]['conditionalFormats'].append(old_rule)
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
+    assert google.tables[0][2][0] == ''
+    assert google.tables[0][3][0] == APPROVED
+    assert google.tables[0][-1][0] == PLANNED
+    clearing = next(request['updateCells'] for request in google.writes[-1]
+                    if 'updateCells' in request and request['updateCells']['range']['startRowIndex'] == 2)
+    assert 'userEnteredValue' not in clearing['rows'][0]['values'][0]
+    assert 'userEnteredValue' in clearing['fields']
+    assert clearing['rows'][0]['values'][0]['userEnteredFormat']['backgroundColorStyle']['rgbColor'] == COLORS[EMPTY]
+    assert len(google.meta[0]['conditionalFormats']) == 5
+    assert google.meta[0]['conditionalFormats'][1]['booleanRule']['condition']['values'] == [{'userEnteredValue': PLANNED}]
+    assert google.meta[0]['conditionalFormats'][1]['booleanRule']['format']['backgroundColor'] == COLORS[PLANNED]
+    assert publication_status(date(2026, 11, 1), 'Задание без ссылки', PLANNED, date(2026, 11, 5)) == EMPTY
