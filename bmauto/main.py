@@ -446,7 +446,7 @@ class Bot:
                 if days.count(task["day"]) > 1:
                     label += f" · {task['row']}"
                 date_buttons.append((label, {"a": "task", "i": i}))
-        rows = [[date_buttons[i], date_buttons[i + DATE_COLUMN_SIZE] if i + DATE_COLUMN_SIZE < len(date_buttons) else ("\u2800", {"a": "noop"})]
+        rows = [[date_buttons[i], date_buttons[i + DATE_COLUMN_SIZE] if i + DATE_COLUMN_SIZE < len(date_buttons) else ("\u2800", {"a": "noop", "_callback": True})]
                 for i in range(min(DATE_COLUMN_SIZE, len(date_buttons)))]
         pagination = []
         if page:

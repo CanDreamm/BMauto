@@ -62,7 +62,8 @@ def keyboard(buttons):
     def action(label, payload):
         if "open_link" in payload:
             return {"type": "open_link", "label": label[:40], "link": payload["open_link"]}
-        return {"type": "text", "label": label[:40], "payload": json.dumps({k: v for k, v in payload.items() if k != "_color"})}
+        return {"type": "callback" if payload.get("_callback") else "text", "label": label[:40],
+                "payload": json.dumps({k: v for k, v in payload.items() if k not in {"_color", "_callback"}})}
     return {"inline": False, "one_time": False, "buttons": [
         [({"action": action(label, payload)} if "open_link" in payload else {"action": action(label, payload), "color": button_color(label, payload)})
          for label, payload in row] for row in rows
@@ -242,6 +243,10 @@ class VK:
                 for event in body.get("updates", []):
                     if event["type"] == "message_new":
                         handler(event["object"]["message"])
+                    elif event["type"] == "message_event" and event["object"].get("payload", {}).get("a") == "noop":
+                        callback = event["object"]
+                        self.call("messages.sendMessageEventAnswer", event_id=callback["event_id"],
+                                  user_id=callback["user_id"], peer_id=callback["peer_id"])
                 server["ts"] = body["ts"]
             except (httpx.HTTPError, ValueError, KeyError):
                 # Do not log HTTP exceptions: request URLs may contain Long Poll keys.

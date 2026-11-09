@@ -49,6 +49,7 @@ def test_select_project_directly_shows_two_column_dates_and_only_two_footer_butt
     assert actions(bot) == {"task", "settings", "projects"}
     assert bot.store.session(1)["view"] == "dates"
     assert payload(rows[3][1]) == {"a": "noop"}
+    assert rows[3][1]["action"]["type"] == "callback"
     count = len(bot.vk.messages)
     Conversation(bot).send("noop")
     assert len(bot.vk.messages) == count
