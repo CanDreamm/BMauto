@@ -222,10 +222,12 @@ class VK:
         photo_format(data)
         return bytes(data)
 
-    def run(self, handler):
+    def run(self, handler, maintenance=None):
         server = None
         while True:
             try:
+                if maintenance is not None:
+                    maintenance()
                 if server is None:
                     server = self.call("groups.getLongPollServer", group_id=self.group_id)
                 response = self.http.get(server["server"], params={"act": "a_check", "key": server["key"], "ts": server["ts"], "wait": 25})

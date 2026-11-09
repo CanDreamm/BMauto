@@ -12,7 +12,7 @@ def load_tasks(google, project, today):
     sheets = google.worksheets(project)
     warnings = []
     try:
-        google.sync_statuses(project, sheets)
+        google.sync_statuses(project, sheets, today=today)
     except Exception:
         warnings.append("Не удалось обновить статусы в колонке A. Проверьте право редактирования таблицы и откройте проект повторно")
 

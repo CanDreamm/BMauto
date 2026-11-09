@@ -1,11 +1,11 @@
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
 from bmauto.core import Store, append_materials, tasks_from_rows
 from bmauto.google import publish
-from bmauto.statuses import APPROVED, COLORS, EXPIRED, SENT, StatusSheets, is_our_rule, status_formula
+from bmauto.statuses import APPROVED, COLORS, EXPIRED, SENT, StatusSheets, is_our_rule, publication_status, PLANNED
 from bmauto.vk import keyboard
 from test_draft_editing import selected_bot
 from test_projects import Conversation, actions
@@ -70,10 +70,10 @@ class Sheets(StatusSheets):
 def test_install_live_statuses_only_in_A_preserves_approvals_and_other_cells(project, header):
     google = Sheets(header)
     before = deepcopy(google.tables[0])
-    google.sync_statuses(project, google.worksheets(project))
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
     rows = google.tables[0]
     assert rows[header - 1][0] == "Статус"
-    assert rows[header][0] == status_formula(header + 1)
+    assert rows[header][0] == PLANNED
     assert rows[header + 1][0] == APPROVED
     assert rows[header + 2] == before[header + 2]
     assert [row[1:] for row in rows] == [row[1:] for row in before]
@@ -87,25 +87,24 @@ def test_install_live_statuses_only_in_A_preserves_approvals_and_other_cells(pro
     assert rules[0]["booleanRule"]["format"]["backgroundColor"] == COLORS[EXPIRED]
     assert rules[1]["booleanRule"]["format"]["backgroundColor"] == COLORS[SENT]
     assert rules[2]["booleanRule"]["format"]["backgroundColor"] == COLORS[APPROVED]
-    google.sync_statuses(project, google.worksheets(project))
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
     assert len(google.writes) == 1  # Existing formulas and rules are not rewritten.
 
 
-def test_formula_tracks_date_and_materials_without_bot_running():
-    formula = status_formula(17)
-    assert '$B17' in formula and '$D17' in formula and '<TODAY()' in formula
-    assert formula.index(EXPIRED) < formula.index(SENT)
-    assert 'ISNUMBER($B17)' in formula  # Native Sheets dates as well as text dates.
-    assert 'MID($B17,5,1)="-"' in formula
-    assert formula.count('(') == formula.count(')')
+def test_status_priority_preserves_approval_and_detects_expired_and_sent():
+    today = date(2026, 11, 9)
+    assert publication_status(date(2026, 11, 8), "", APPROVED, today) == APPROVED
+    assert publication_status(date(2026, 11, 8), append_materials("Текст", URL), SENT, today) == EXPIRED
+    assert publication_status(date(2026, 11, 10), append_materials("Текст", URL), "#ERROR!", today) == SENT
+    assert publication_status(today, "Текст", "#ERROR!", today) == PLANNED
 
 
-@pytest.mark.parametrize("value", [46332, "=B2+1", "=TODAY()+7", "2030-01-06", "06/01/2030"])
-def test_dates_from_native_cells_and_formulas_get_statuses(project, value):
+@pytest.mark.parametrize("value", [46332, "06.01.2030", "2030-01-06", "06/01/2030"])
+def test_formatted_dates_and_native_serial_dates_get_statuses(project, value):
     google = Sheets()
     google.tables[0][2][1] = value
-    google.sync_statuses(project, google.worksheets(project))
-    assert google.tables[0][2][0] == status_formula(3)
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
+    assert google.tables[0][2][0] == PLANNED
 
 
 def test_settings_footer_pairs_back_and_delete(tmp_path, project):
@@ -126,7 +125,7 @@ def test_sync_all_months_by_sheet_id_and_replaces_old_owned_rules(project):
     old["booleanRule"]["condition"] = {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=N("BMauto:status:v1")=0'}]}
     google.meta[0]["conditionalFormats"].insert(0, old)
     google.sync_statuses(project, [{"sheetId": 0, "title": "ноябрь"}, {"sheetId": 8, "title": "Октябрь"}])
-    assert google.tables[0][2][0] == google.tables[8][2][0] == status_formula(3)
+    assert google.tables[0][2][0] == google.tables[8][2][0] == EXPIRED
     assert len(google.meta[0]["conditionalFormats"]) == 5
     assert len(google.meta[8]["conditionalFormats"]) == 4
 
@@ -147,7 +146,7 @@ def test_approve_validates_source_and_changes_only_A_then_sent_resets_approval()
     google.set_status(project, chosen, APPROVED, URL)
     assert google.tables[0][2] == [APPROVED] + before[2][1:]
     google.set_status(project, chosen, SENT, URL)
-    assert google.tables[0][2][0] == status_formula(3)
+    assert google.tables[0][2][0] == publication_status(date(2026, 11, 6), before[2][3], "", datetime.now().date())
     assert google.tables[0][2][1:] == before[2][1:]
 
 
@@ -249,15 +248,15 @@ def test_approval_writes_green_fill_and_installs_rules_above_existing_formats():
     assert rules[-1] == original_other_rule
 
 
-def test_russian_locale_uses_static_color_rules_and_correct_formula_separator(project):
+def test_russian_locale_does_not_require_any_formulas(project):
     google = Sheets()
     google.locale = 'ru_RU'
-    google.sync_statuses(project, google.worksheets(project))
-    assert google.tables[0][2][0] == status_formula(3, ';')
-    assert ',' not in google.tables[0][2][0]
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
+    assert google.tables[0][2][0] == PLANNED
+    assert not google.tables[0][2][0].startswith('=')
     assert all(rule['booleanRule']['condition']['type'] == 'TEXT_EQ'
                for rule in google.meta[0]['conditionalFormats'][:4])
-    google.sync_statuses(project, google.worksheets(project))
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
     assert len(google.writes) == 1
 
 
@@ -267,7 +266,50 @@ def test_old_or_displaced_color_rules_are_repaired_without_touching_other_channe
            'booleanRule': {'condition': {'type': 'CUSTOM_FORMULA', 'values': [
                {'userEnteredValue': '=N("BMauto:status:v1")=0'}]}, 'format': {'backgroundColor': COLORS[SENT]}}}
     google.meta[0]['conditionalFormats'].append(old)
-    google.sync_statuses(project, google.worksheets(project))
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
     assert len(google.meta[0]['conditionalFormats']) == 5
     assert all(rule['booleanRule']['condition']['type'] == 'TEXT_EQ'
                for rule in google.meta[0]['conditionalFormats'][:4])
+
+
+def test_sending_materials_writes_literal_status_and_yellow_fill():
+    google = Sheets()
+    google.tables[0][2][1] = '06.11.2099'
+    google.tables[0][3][1] = '07.11.2099'
+    project, chosen = selected(google)
+    google.set_status(project, chosen, SENT, URL)
+    cell = google.writes[-1][-1]['updateCells']['rows'][0]['values'][0]
+    assert cell['userEnteredValue'] == {'stringValue': SENT}
+    assert cell['userEnteredFormat']['backgroundColorStyle']['rgbColor'] == COLORS[SENT]
+    assert google.tables[0][2][0] == SENT
+
+
+def test_broken_formulas_are_replaced_without_changing_existing_approval(project):
+    google = Sheets()
+    google.tables[0][2][0] = '#ERROR!'
+    google.tables[0][2][3] = append_materials('Текст', URL)
+    google.sync_statuses(project, google.worksheets(project), today=date(2026, 11, 5))
+    assert google.tables[0][2][0] == SENT
+    assert google.tables[0][3][0] == APPROVED
+    cell_updates = [request['updateCells'] for request in google.writes[-1] if 'updateCells' in request]
+    assert all('formulaValue' not in update['rows'][0]['values'][0]['userEnteredValue'] for update in cell_updates)
+
+
+def test_background_refresh_runs_at_startup_and_after_date_changes(tmp_path, project, monkeypatch):
+    import bmauto.main as main
+    bot, chat = selected_bot(tmp_path, project)
+    calls = []
+    bot.google.sync_statuses = lambda project, sheets, today=None: calls.append(today)
+    class Clock(datetime):
+        day = 5
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, cls.day, tzinfo=tz)
+    monkeypatch.setattr(main, 'datetime', Clock)
+    bot.refresh_statuses()
+    bot.refresh_statuses()
+    assert calls == [date(2026, 11, 5)]
+    Clock.day = 6
+    bot._status_retry_at = 0
+    bot.refresh_statuses()
+    assert calls == [date(2026, 11, 5), date(2026, 11, 6)]

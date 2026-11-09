@@ -21,7 +21,7 @@ class FakeGoogle:
         self.count = 0
         self.fail_link = False
 
-    def sync_statuses(self, project, sheets):
+    def sync_statuses(self, project, sheets, today=None):
         pass
 
     def set_status(self, project, task, status, url):

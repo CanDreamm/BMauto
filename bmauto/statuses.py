@@ -1,5 +1,5 @@
-"""Live status formulas in column A; approvals are explicit values."""
-from datetime import datetime
+"""Plain status values and explicit colors in column A."""
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .core import DEFAULT_COLUMNS, assignment_cell, assignment_from_task, parse_date, table_layout
@@ -15,20 +15,18 @@ COLORS = {EXPIRED: {"red": .85, "green": .85, "blue": .85},
           PLANNED: {"red": 1, "green": 1, "blue": 1}}
 
 
-def status_formula(row, separator=","):
-    b, d = f"$B{row}", f"$D{row}"
-    # Dates can be Sheets serial numbers, dd.mm.yyyy / dd/mm/yyyy, or ISO strings.
-    day = (f'IF(ISNUMBER({b}),INT({b}),IF(MID({b},5,1)="-",'
-           f'DATE(VALUE(LEFT({b},4)),VALUE(MID({b},6,2)),VALUE(RIGHT({b},2))),'
-           f'DATE(VALUE(RIGHT({b},4)),VALUE(MID({b},4,2)),VALUE(LEFT({b},2)))))')
-    formula = (f'=IF({b}="","",IF(IFERROR({day}<TODAY(),FALSE),"{EXPIRED}",'
-               f'IF(ISNUMBER(SEARCH("Готовые материалы:",{d})),"{SENT}","{PLANNED}")))')
-    return formula.replace(",", separator)
+def status_day(value):
+    if isinstance(value, (int, float)):
+        return date(1899, 12, 30) + timedelta(days=int(value))
+    return parse_date(str(value))
 
 
-def argument_separator(metadata):
-    locale = metadata.get("properties", {}).get("locale", "en_US").replace("-", "_")
-    return ";" if locale.split("_")[0] in {"ru", "uk", "be", "de", "fr", "it", "pt", "pl", "nl", "da", "fi", "no", "nb", "sv", "cs", "sk", "hu", "tr", "el", "ro", "bg", "hr", "sr", "sl", "lt", "lv", "et"} else ","
+def publication_status(day, description, current, today):
+    if current == APPROVED:
+        return APPROVED
+    if day < today:
+        return EXPIRED
+    return SENT if assignment_cell(description)[1] else PLANNED
 
 
 def rules_for(sheet_id, header_row):
@@ -75,8 +73,9 @@ def cell_update(sheet_id, row, value, color=None):
 
 
 class StatusSheets:
-    def sync_statuses(self, project, sheets):
-        """Install formulas and idempotent formatting for every monthly worksheet."""
+    def sync_statuses(self, project, sheets, today=None):
+        """Recalculate status values and formatting for every monthly worksheet."""
+        today = today or datetime.now(ZoneInfo("Europe/Moscow")).date()
         from .calendar import MONTHS
         month_names = {name.casefold() for name in MONTHS}
         ids = [s["sheetId"] for s in sheets if s["title"].strip().casefold() in month_names]
@@ -84,10 +83,9 @@ class StatusSheets:
             return
         book = project["spreadsheet_id"]
         metadata = self.request("GET", f"sheets/v4/spreadsheets/{book}", params={
-            "fields": "properties(locale),sheets(properties(sheetId),merges,conditionalFormats)"})
-        separator = argument_separator(metadata)
+            "fields": "sheets(properties(sheetId),merges,conditionalFormats)"})
         result = self.request("POST", f"sheets/v4/spreadsheets/{book}/values:batchGetByDataFilter", json={
-            "dataFilters": [{"gridRange": {"sheetId": sid}} for sid in ids], "valueRenderOption": "FORMULA"})
+            "dataFilters": [{"gridRange": {"sheetId": sid}} for sid in ids], "valueRenderOption": "FORMATTED_VALUE"})
         values = {}
         for item in result.get("valueRanges", []):
             for data_filter in item.get("dataFilters", []):
@@ -114,13 +112,13 @@ class StatusSheets:
                 if len(row) < 2 or not row[1]:
                     continue
                 try:
-                    if not isinstance(row[1], (int, float)) and not str(row[1]).startswith("="):
-                        parse_date(str(row[1]))
+                    day = status_day(row[1])
                 except ValueError:
                     continue
                 current = str(row[0]) if row else ""
-                if current != APPROVED and current != status_formula(number, separator):
-                    requests.append(cell_update(sid, number, status_formula(number, separator)))
+                status = publication_status(day, row[3] if len(row) > 3 else "", current, today)
+                if current != status:
+                    requests.append(cell_update(sid, number, status, COLORS[status]))
             requests.extend(format_updates(sheet, header))
         if requests:
             self.request("POST", f"sheets/v4/spreadsheets/{book}:batchUpdate", json={"requests": requests})
@@ -151,11 +149,10 @@ class StatusSheets:
         if not url or current_url != url:
             raise ValueError("Сначала отправьте материалы в таблицу и проверьте ссылку")
         metadata = self.request("GET", f"sheets/v4/spreadsheets/{source['spreadsheet_id']}", params={
-            "fields": "properties(locale),sheets(properties(sheetId),conditionalFormats)"})
+            "fields": "sheets(properties(sheetId),conditionalFormats)"})
         sheet = next((s for s in metadata.get("sheets", []) if s["properties"]["sheetId"] == source["_sheet_id"]), None)
         if sheet is None:
             raise ValueError("Вкладка задания не найдена")
-        value = APPROVED if status == APPROVED else status_formula(number, argument_separator(metadata))
         color_status = APPROVED if status == APPROVED else EXPIRED if task["day"] < datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat() else SENT
         self.request("POST", f"sheets/v4/spreadsheets/{source['spreadsheet_id']}:batchUpdate", json={
-            "requests": format_updates(sheet, header) + [cell_update(source["_sheet_id"], number, value, COLORS[color_status])]})
+            "requests": format_updates(sheet, header) + [cell_update(source["_sheet_id"], number, color_status, COLORS[color_status])]})

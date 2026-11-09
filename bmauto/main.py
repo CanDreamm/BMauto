@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -29,6 +30,28 @@ class Bot:
         self.google_menus = GoogleMenus(connections, store, vk, allowed)
         self.zone = ZoneInfo("Europe/Moscow")
         self.store, self.vk, self.google, self.llm, self.allowed = store, vk, google, llm, allowed
+        self._status_day = None
+        self._status_retry_at = 0
+
+    def refresh_statuses(self):
+        today = datetime.now(self.zone).date()
+        if self._status_day == today or time.monotonic() < self._status_retry_at:
+            return
+        self._status_retry_at = time.monotonic() + 300
+        complete = True
+        for project in self.store.projects().values():
+            if not project.get("spreadsheet_id"):
+                continue
+            if isinstance(self.google, ProjectGoogle) and not self.google.connections.connected(project):
+                continue
+            try:
+                google = self.google_for(project)
+                google.sync_statuses(project, google.worksheets(project), today=today)
+            except Exception:
+                complete = False
+                print("Не удалось обновить статусы проекта. Повтор через 5 минут.", flush=True)
+        if complete:
+            self._status_day = today
 
     def google_for(self, project):
         return self.google.for_project(project) if isinstance(self.google, ProjectGoogle) else self.google
@@ -444,7 +467,7 @@ def main():
     connections = connections_from_env(store)
     bot = Bot(config, store, vk, ProjectGoogle(connections), GenAPI(),
               {int(x.strip()) for x in os.environ["VK_ALLOWED_USERS"].split(",") if x.strip()}, connections)
-    vk.run(bot.handle)
+    vk.run(bot.handle, maintenance=bot.refresh_statuses)
 
 
 if __name__ == "__main__":
