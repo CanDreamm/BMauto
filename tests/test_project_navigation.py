@@ -41,12 +41,17 @@ def test_select_project_directly_shows_two_column_dates_and_only_two_footer_butt
     many_dates(bot.google, 5)
     Conversation(bot).send("project", p="test")
     rows = serialized(bot)
-    assert [len(row) for row in rows] == [2, 1, 1, 1, 1, 1]
-    assert [payload(b)["i"] for row in rows[:-2] for b in row] == [0, 4, 1, 2, 3]
+    assert [len(row) for row in rows] == [2, 2, 2, 2, 1, 1]
+    assert [payload(b)["i"] for row in rows[:-2] for b in row if payload(b)["a"] == "task"] == [0, 4, 1, 2, 3]
     assert rows[0][0]["action"]["label"] == "02.01.3000 — Среда"
     assert rows[-2][0]["action"]["label"] == "Настройки"
     assert rows[-1][0]["action"]["label"] == "Все проекты"
     assert actions(bot) == {"task", "settings", "projects"}
+    assert bot.store.session(1)["view"] == "dates"
+    assert payload(rows[3][1]) == {"a": "noop"}
+    count = len(bot.vk.messages)
+    Conversation(bot).send("noop")
+    assert len(bot.vk.messages) == count
     assert bot.store.session(1)["view"] == "dates"
 
 
@@ -68,8 +73,8 @@ def test_dates_pagination_retains_pairs_and_selects_correct_task(tmp_path, proje
     assert "task" not in bot.store.session(1)
     chat.send("page", page=3)
     last = serialized(bot)
-    assert [len(row) for row in last[:4]] == [2, 1, 1, 1]
-    assert [payload(b)["i"] for row in last[:4] for b in row] == [24, 28, 25, 26, 27]
+    assert [len(row) for row in last[:4]] == [2, 2, 2, 2]
+    assert [payload(b)["i"] for row in last[:4] for b in row if payload(b)["a"] == "task"] == [24, 28, 25, 26, 27]
 
 
 def test_new_project_and_empty_calendar_have_exact_footer(tmp_path, project):

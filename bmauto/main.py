@@ -230,6 +230,8 @@ class Bot:
         text = message.get("text", "").strip()
         payload = json.loads(message.get("payload") or "{}")
         action = payload.get("a")
+        if action == "noop":
+            return
         if text.lower() in ("начать", "start", "/start", "проекты") or not session:
             action = "projects"
         elif text.lower() in ("меню", "/menu", "меню проекта"):
@@ -444,7 +446,7 @@ class Bot:
                 if days.count(task["day"]) > 1:
                     label += f" · {task['row']}"
                 date_buttons.append((label, {"a": "task", "i": i}))
-        rows = [[date_buttons[i]] + ([date_buttons[i + DATE_COLUMN_SIZE]] if i + DATE_COLUMN_SIZE < len(date_buttons) else [])
+        rows = [[date_buttons[i], date_buttons[i + DATE_COLUMN_SIZE] if i + DATE_COLUMN_SIZE < len(date_buttons) else ("\u2800", {"a": "noop"})]
                 for i in range(min(DATE_COLUMN_SIZE, len(date_buttons)))]
         pagination = []
         if page:

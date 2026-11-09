@@ -184,7 +184,7 @@ def test_google_authorization_is_lazy(tmp_path):
 
 def actions(bot):
     rows = [item if isinstance(item, list) else [item] for item in bot.vk.messages[-1][1]]
-    return {p["a"] for row in rows for _, p in row}
+    return {p["a"] for row in rows for _, p in row if p["a"] != "noop"}
 
 
 def test_create_only_name_then_independent_fields(tmp_path):
