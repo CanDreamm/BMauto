@@ -8,11 +8,12 @@ from docx import Document
 from google.auth.transport.requests import Request
 
 from .core import DEFAULT_COLUMNS, append_materials, assignment_cell, assignment_from_task, table_layout
+from .statuses import SENT, StatusSheets
 
 SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
 
 
-class Google:
+class Google(StatusSheets):
     def __init__(self, credentials_file):
         self.credentials_file = credentials_file
         self.credentials = None
@@ -241,7 +242,9 @@ def publish(google, store, key, project, task):
     google.share(draft["folder"])
     url = f"https://drive.google.com/drive/folders/{draft['folder']}"
     google.set_link(project, row, headers, url)
+    google.set_status(project, task, SENT, url)
     draft["published"] = True
     draft["dirty"] = False
+    draft["approved"] = False
     store.save_draft(key, draft)
     return url

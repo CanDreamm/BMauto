@@ -16,6 +16,7 @@ from .oauth import GoogleMenus, ProjectGoogle
 from .oauth_server import connections_from_env
 from .projects import ProjectMenus
 from .vk import VK, photo_format
+from .statuses import APPROVED, EXPIRED, PLANNED, SENT
 
 
 class Bot:
@@ -74,6 +75,8 @@ class Bot:
         message = task_context(task)
         if task.get("material_url"):
             message += "\n\nГотовые материалы:\n" + task["material_url"]
+        if task.get("status") in {APPROVED, SENT, EXPIRED, PLANNED}:
+            message += "\n\nСтатус: " + task["status"]
         return message
 
     def missing_generation_settings(self, project):
@@ -93,7 +96,7 @@ class Bot:
         send_button = None
         if (draft["text"].strip() or draft["photos"]) and (draft.get("dirty") or not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
             label = ("Сохранить изменения" if draft.get("dirty") else "Добавить ссылку под заданием") if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
-            send_button = (label, {"a": "publish"})
+            send_button = (label, {"a": "publish", "_color": "primary"})
         if session.get("mode") == "supplement":
             return [("Без дополнений", {"a": "no_supplement"})] + navigation
         if session.get("mode") == "text":
@@ -102,15 +105,18 @@ class Bot:
             remove = [(f"Удалить фото {i}", {"a": "remove_photo", "id": photo["id"]}) for i, photo in enumerate(draft["photos"], 1)]
             rows = [remove[i:i + 3] for i in range(0, len(remove), 3)]
             if remove:
-                rows.append(("Убрать все фото", {"a": "clear_photos"}))
-            return ([send_button] if send_button else []) + rows + [("Готово", {"a": "done"})] + navigation
-        buttons = [("Сгенерировать текст", {"a": "generate"}),
-                   ("Редактировать текст" if draft["text"] else "Написать текст", {"a": "edit_text"}),
-                   ("Фотографии" if draft["photos"] else "Загрузить фотографии", {"a": "photos"})]
+                rows.append(("Убрать все фото", {"a": "clear_photos", "_color": "negative"}))
+            return rows + ([send_button] if send_button else []) + [("Готово", {"a": "done"})] + navigation
+        buttons = []
         if draft["text"] or draft["photos"]:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
+        buttons.append([("Редактировать текст" if draft["text"] else "Написать текст", {"a": "edit_text"}),
+                        ("Сгенерировать заново" if draft["text"] else "Сгенерировать текст", {"a": "generate"})])
+        buttons.append((f"Фотографии · {len(draft['photos'])}/9", {"a": "photos"}))
         if send_button:
             buttons.append(send_button)
+        elif session["task"].get("material_url") and not draft.get("dirty") and not draft.get("approved") and session["task"].get("status") != APPROVED:
+            buttons.append(("Согласовано", {"a": "approve", "_color": "positive"}))
         if missing:
             buttons.append(("Настройки проекта", {"a": "settings"}))
         return buttons + [("К датам проекта", {"a": "project_home"})]
@@ -270,12 +276,23 @@ class Bot:
         if action == "preview":
             self.vk.send(user, f"{draft['text'] or 'Текст пока не создан'}\n\nФото: {len(draft['photos'])}/9", self.task_buttons(session, project))
             return
+        if action == "approve":
+            if draft.get("dirty"):
+                raise ValueError("Сначала сохраните изменения в таблицу")
+            self.google_for(project).set_status(project, task, APPROVED, task.get("material_url"))
+            draft["approved"] = True
+            self.store.save_draft(key, draft)
+            session["task"]["status"] = APPROVED
+            self.store.save_session(user, session)
+            self.vk.send(user, "Согласовано. Статус в колонке A отмечен зелёным.", self.task_buttons(session, project))
+            return
         if action == "publish":
             session["mode"], session["view"] = None, "task"
             self.store.save_session(user, session)
             self.vk.send(user, "Сохраняю материалы на Google Диск…")
             url = publish(self.google_for(project), self.store, key, project, task)
             session["task"]["material_url"] = url
+            session["task"]["status"] = EXPIRED if task["day"] < datetime.now(self.zone).date().isoformat() else SENT
             self.store.save_session(user, session)
             self.vk.send(user, "Готово. Ссылка записана под описанием в D:\n" + url, self.task_buttons(session, project))
             return

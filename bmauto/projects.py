@@ -84,10 +84,11 @@ class ProjectMenus:
         connected = self.connections is not None and self.connections.connected(project)
         buttons = [("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"})]
         if self.store.can_manage(project["id"], user, self.admins):
-            buttons.append([("Назад", {"a": "project_home"}),
-                            ("Удалить проект", {"a": "project_delete", "_color": "negative"})])
+            buttons.extend((label, {"a": "project_edit", "field": key})
+                           for key, label, _, _ in sorted(FIELDS, key=lambda field: field[0] != "spreadsheet_id"))
             buttons.append(("Участники", {"a": "members"}))
-            buttons.extend((label, {"a": "project_edit", "field": key}) for key, label, _, _ in FIELDS)
+            buttons.append(("Удалить проект", {"a": "project_delete", "_color": "negative"}))
+            buttons.append(("Назад к датам", {"a": "project_home"}))
         else:
             details.append("Вы можете подключить свой Google для этого проекта. Остальные настройки меняет владелец проекта")
             buttons.append(("Назад", {"a": "project_home"}))

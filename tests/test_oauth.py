@@ -248,7 +248,7 @@ def test_assigned_member_connects_own_google_from_vk_settings(connection, monkey
     owner = Conversation(bot, 1)
     owner.send("project", p="test")
     owner.send("settings")
-    assert vk.messages[-1][1][2] == ("Участники", {"a": "members"})
+    assert ("Участники", {"a": "members"}) in vk.messages[-1][1]
     owner.send("member_add")
     owner.send(text="3")
     member = Conversation(bot, 3)

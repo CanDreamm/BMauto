@@ -11,6 +11,10 @@ def load_tasks(google, project, today):
     project = {**DEFAULT_COLUMNS, **project}
     sheets = google.worksheets(project)
     warnings = []
+    try:
+        google.sync_statuses(project, sheets)
+    except Exception:
+        warnings.append("Не удалось обновить статусы в колонке A. Проверьте право редактирования таблицы и откройте проект повторно")
 
     def read_month(year, month):
         title = MONTHS[month - 1]

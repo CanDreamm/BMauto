@@ -21,7 +21,7 @@ def test_one_photo_can_be_sent_immediately_from_upload_menu(tmp_path, project, w
     bot.handle(dict(id=session["last_message"] + 1, from_id=1, peer_id=1, text="", attachments=[
         {"type": "photo", "photo": {"owner_id": 1, "id": 5, "sizes": [{"width": 100, "height": 100, "url": "photo"}]}}
     ]))
-    assert bot.vk.messages[-1][1][0] == ("Отправить в таблицу", {"a": "publish"})
+    assert "publish" in actions(bot)
     chat.send("publish")
     assert bot.google.created == (["publication.docx"] if with_text else []) + ["photo_01.jpg"]
     assert bot.store.session(1)["mode"] is None

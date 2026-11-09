@@ -21,6 +21,12 @@ class FakeGoogle:
         self.count = 0
         self.fail_link = False
 
+    def sync_statuses(self, project, sheets):
+        pass
+
+    def set_status(self, project, task, status, url):
+        self.rows(project)[task["row"] - 1][0] = status
+
     def rows(self, project):
         return self.table
 
