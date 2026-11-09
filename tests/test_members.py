@@ -88,7 +88,7 @@ def test_shared_draft_photo_upload_and_publish_by_member(tmp_path, project):
     bot.handle(dict(id=session["last_message"] + 1, from_id=3, peer_id=3, text="",
                     attachments=[dict(type="photo", photo=dict(owner_id=3, id=5,
                                   sizes=[dict(width=10, height=10, url="photo")]))]))
-    chat.send("done")
+    chat.send("task_home")
     assert len(bot.store.draft(owner_key)["photos"]) == 1
     chat.send("publish")
     assert bot.store.draft(owner_key)["published"]
