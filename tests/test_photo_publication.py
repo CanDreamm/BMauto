@@ -7,7 +7,7 @@ from test_workflow import FakeGoogle, task
 
 
 @pytest.mark.parametrize("with_text", [False, True])
-def test_one_photo_can_be_sent_immediately_from_upload_menu(tmp_path, project, with_text):
+def test_one_photo_is_sent_from_task_menu_after_saving(tmp_path, project, with_text):
     bot = bot_at(tmp_path, {"projects": [project]})
     chat = Conversation(bot)
     chat.send("project", p="test")
@@ -21,6 +21,8 @@ def test_one_photo_can_be_sent_immediately_from_upload_menu(tmp_path, project, w
     bot.handle(dict(id=session["last_message"] + 1, from_id=1, peer_id=1, text="", attachments=[
         {"type": "photo", "photo": {"owner_id": 1, "id": 5, "sizes": [{"width": 100, "height": 100, "url": "photo"}]}}
     ]))
+    assert "publish" not in actions(bot)
+    chat.send("done")
     assert "publish" in actions(bot)
     chat.send("publish")
     assert bot.google.created == (["publication.docx"] if with_text else []) + ["photo_01.jpg"]

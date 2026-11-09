@@ -102,8 +102,6 @@ class Bot:
             remove = [(f"Удалить фото {i}", {"a": "remove_photo", "id": photo["id"]}) for i, photo in enumerate(draft["photos"], 1)]
             rows = [remove[i:i + 3] for i in range(0, len(remove), 3)]
             rows.append(("Сохранить", {"a": "done", "_color": "positive"}))
-            if send_button:
-                rows.append(("Отправить в таблицу", send_button[1]))
             if remove:
                 rows.append(("Удалить все фото", {"a": "clear_photos", "_color": "negative"}))
             return rows + navigation
@@ -333,7 +331,7 @@ class Bot:
             session["mode"] = "photos"
             session["view"] = "photos"
             self.store.save_session(user, session)
-            self.vk.send(user, f"Прикрепляйте фотографии как фото ВК. Сохранено {len(draft['photos'])}/9. Затем нажмите «Сохранить» или «Отправить в таблицу».", self.task_buttons(session, project))
+            self.vk.send(user, f"Прикрепляйте фотографии как фото ВК. Сохранено {len(draft['photos'])}/9. Затем нажмите «Сохранить», чтобы вернуться к заданию.", self.task_buttons(session, project))
             return
         if action == "done":
             session["mode"] = None
