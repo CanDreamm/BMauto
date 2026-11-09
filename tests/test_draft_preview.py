@@ -82,3 +82,77 @@ def test_missing_local_photo_is_reported_before_upload(tmp_path):
     vk.call = lambda *args, **kwargs: pytest.fail("Missing files must be checked before VK calls")
     with pytest.raises(ValueError, match="Не найден сохранённый файл"):
         vk.send_draft(42, "Текст", [(tmp_path / "missing.jpg", "image/jpeg")], [])
+
+
+def test_vk_error_identifies_method_and_reason_without_token_or_request_params():
+    from bmauto.vk import VKAPIError
+    token = 'private-token-for-test'
+    vk = VK(token, 1)
+    vk.http = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+        'error': {'error_code': 100, 'error_msg': 'Invalid photo: '+token+' https://pu.vk.com/upload?key=secret',
+                  'request_params': [{'key': 'access_token', 'value': token}]}})))
+    with pytest.raises(VKAPIError) as caught:
+        vk.call('photos.saveMessagesPhoto', photo='invalid')
+    error = caught.value
+    assert error.code == 100 and error.method == 'photos.saveMessagesPhoto'
+    assert 'Invalid photo' in str(error)
+    assert token not in str(error) and 'key=secret' not in str(error) and 'request_params' not in str(error)
+
+
+@pytest.mark.parametrize('failure', ['zero_id', 'api_error'])
+def test_photo_upload_uses_compatible_version_when_modern_api_rejects_photo(tmp_path, failure):
+    from bmauto.vk import LEGACY_PHOTO_VERSION, VKAPIError
+    path = tmp_path / 'photo.jpg'
+    path.write_bytes(b'\xff\xd8image')
+    vk = VK('test', 1)
+    calls = []
+    vk.http = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={
+        'server': 1, 'photo': 'uploaded', 'hash': 'test'})))
+
+    def call(method, **kwargs):
+        calls.append((method, kwargs))
+        if method == 'photos.getMessagesUploadServer':
+            return {'upload_url': 'https://pu.vk.com/upload'}
+        if method == 'photos.saveMessagesPhoto':
+            if kwargs.get('v') != LEGACY_PHOTO_VERSION:
+                if failure == 'api_error':
+                    raise VKAPIError(method, 100, 'Invalid photo')
+                return [{'owner_id': 0, 'id': 0}]
+            return [{'owner_id': -1, 'id': 42}]
+        assert method == 'messages.send'
+
+    vk.call = call
+    vk.send_draft(42, 'Текст', [(path, 'image/jpeg')], [])
+    assert calls[-1][1]['attachment'] == 'photo-1_42'
+    assert any(method == 'photos.saveMessagesPhoto' and args.get('v') == LEGACY_PHOTO_VERSION for method, args in calls)
+
+
+def test_attachment_message_retry_keeps_random_id():
+    from bmauto.vk import LEGACY_PHOTO_VERSION, VKAPIError
+    vk = VK('test', 1)
+    calls = []
+    def call(method, **kwargs):
+        calls.append(kwargs)
+        if kwargs.get('v') != LEGACY_PHOTO_VERSION:
+            raise VKAPIError(method, 100, 'Invalid attachment')
+    vk.call = call
+    vk.send(42, 'Текст', attachments=['photo-1_42'])
+    assert len(calls) == 2 and calls[0]['random_id'] == calls[1]['random_id']
+    assert calls[1]['v'] == LEGACY_PHOTO_VERSION
+
+
+def test_failed_photo_upload_still_sends_text_and_preserves_detailed_error(tmp_path):
+    from bmauto.vk import VKAPIError
+    path = tmp_path / 'photo.jpg'
+    path.write_bytes(b'\xff\xd8image')
+    vk = VK('test', 1)
+    sent = []
+    def upload(*args):
+        raise VKAPIError('photos.getMessagesUploadServer', 100, 'Invalid peer_id')
+    vk.upload_draft_photo = upload
+    vk.call = lambda method, **kwargs: sent.append((method, kwargs))
+    with pytest.raises(VKAPIError, match='photos.getMessagesUploadServer'):
+        vk.send_draft(42, 'Полный текст черновика', [(path, 'image/jpeg')], [])
+    assert sent[0][0] == 'messages.send'
+    assert sent[0][1]['message'] == 'Полный текст черновика'
+    assert 'attachment' not in sent[0][1]

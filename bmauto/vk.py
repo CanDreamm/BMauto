@@ -8,6 +8,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
+LEGACY_PHOTO_VERSION = "5.131"
+
+
+class VKAPIError(ValueError):
+    def __init__(self, method, code, detail):
+        self.method, self.code = method, code
+        super().__init__(f"Ошибка VK API {code} ({method}): {detail}")
+
 
 def photo_size(photo):
     sizes = photo.get("sizes") or []
@@ -68,7 +76,14 @@ class VK:
         response.raise_for_status()
         body = response.json()
         if "error" in body:
-            raise ValueError(f"Ошибка VK API {body['error'].get('error_code')}")
+            error = body["error"]
+            detail = str(error.get("error_msg") or "ВК отклонил запрос")
+            # Never include request_params, tokens, signed URLs or upload payloads.
+            if self.token:
+                detail = detail.replace(self.token, "[скрыто]")
+            detail = re.sub(r"https?://\S+", "[ссылка]", detail)
+            detail = re.sub(r"[A-Za-z0-9_./+=-]{48,}", "[данные скрыты]", detail)
+            raise VKAPIError(method, error.get("error_code"), detail[:350])
         return body["response"]
 
     def send(self, peer, message, buttons=None, attachments=None):
@@ -79,32 +94,59 @@ class VK:
                 args["attachment"] = ",".join(attachments)
             if buttons is not None and i == len(chunks) - 1:
                 args["keyboard"] = json.dumps(keyboard(buttons), ensure_ascii=False)
-            self.call("messages.send", **args)
+            try:
+                self.call("messages.send", **args)
+            except VKAPIError as exc:
+                if exc.code != 100 or not attachments or i != 0:
+                    raise
+                # Keep random_id for a safe retry of the same message.
+                self.call("messages.send", **args, v=LEGACY_PHOTO_VERSION)
+
+    def upload_draft_photo(self, peer, path, mime, version=None):
+        options = {"v": version} if version else {}
+        server = self.call("photos.getMessagesUploadServer", peer_id=peer, **options)
+        url = server["upload_url"]
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or not any((parsed.hostname or "") == host or (parsed.hostname or "").endswith("." + host)
+                                                for host in ("vk.com", "vk.ru", "userapi.com", "vkuserphoto.ru")):
+            raise ValueError("ВК вернул неподдерживаемый адрес загрузки фото")
+        with Path(path).open("rb") as photo:
+            response = self.http.post(url, files={"photo": (Path(path).name, photo, mime)})
+        response.raise_for_status()
+        uploaded = response.json()
+        payload = uploaded.get("photo")
+        if not payload or payload == "[]":
+            raise ValueError("ВК не принял изображение при загрузке предпросмотра")
+        if isinstance(payload, (dict, list)):
+            payload = json.dumps(payload, separators=(",", ":"))
+        saved = self.call("photos.saveMessagesPhoto", server=uploaded["server"], photo=payload, hash=uploaded["hash"], **options)
+        if not saved:
+            raise ValueError("ВК не сохранил фото для предпросмотра. Повторите просмотр черновика")
+        item = saved[0]
+        if not item.get("owner_id") or not item.get("id"):
+            raise VKAPIError("photos.saveMessagesPhoto", 100, "ВК вернул временный ID фото, непригодный для отправки")
+        reference = f"photo{item['owner_id']}_{item['id']}"
+        if item.get("access_key"):
+            reference += "_" + item["access_key"]
+        return reference
 
     def send_draft(self, peer, text, photos, buttons):
         for path, _ in photos:
             if not Path(path).is_file():
                 raise ValueError("Не найден сохранённый файл фото черновика. Загрузите это фото повторно")
         attachments = []
-        for path, mime in photos:
-            server = self.call("photos.getMessagesUploadServer", peer_id=peer)
-            url = server["upload_url"]
-            parsed = urlsplit(url)
-            if parsed.scheme != "https" or not any((parsed.hostname or "") == host or (parsed.hostname or "").endswith("." + host)
-                                                    for host in ("vk.com", "vk.ru", "userapi.com", "vkuserphoto.ru")):
-                raise ValueError("ВК вернул неподдерживаемый адрес загрузки фото")
-            with Path(path).open("rb") as photo:
-                response = self.http.post(url, files={"photo": (Path(path).name, photo, mime)})
-            response.raise_for_status()
-            uploaded = response.json()
-            saved = self.call("photos.saveMessagesPhoto", server=uploaded["server"], photo=uploaded["photo"], hash=uploaded["hash"])
-            if not saved:
-                raise ValueError("ВК не сохранил фото для предпросмотра. Повторите просмотр черновика")
-            item = saved[0]
-            reference = f"photo{item['owner_id']}_{item['id']}"
-            if item.get("access_key"):
-                reference += "_" + item["access_key"]
-            attachments.append(reference)
+        try:
+            for path, mime in photos:
+                try:
+                    attachment = self.upload_draft_photo(peer, path, mime)
+                except VKAPIError as exc:
+                    if exc.code != 100:
+                        raise
+                    attachment = self.upload_draft_photo(peer, path, mime, LEGACY_PHOTO_VERSION)
+                attachments.append(attachment)
+        except (VKAPIError, ValueError, httpx.HTTPError):
+            self.send(peer, text, buttons)
+            raise
         self.send(peer, text, buttons, attachments=attachments)
 
     def full_photo_message(self, message):
