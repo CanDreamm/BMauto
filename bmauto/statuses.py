@@ -6,15 +6,14 @@ from .core import DEFAULT_COLUMNS, assignment_cell, assignment_from_task, parse_
 
 PLANNED = "Запланировано"
 EXPIRED = "Дата прошла"
-SENT = PLANNED
 EMPTY = ""
 APPROVED = "Согласовано"
 RULE_MARKER = "BMauto:status:v1"
 COLORS = {EXPIRED: {"red": .85, "green": .85, "blue": .85},
-          SENT: {"red": 1, "green": .9, "blue": .6},
+          PLANNED: {"red": 1, "green": .9, "blue": .6},
           APPROVED: {"red": .71, "green": .84, "blue": .66},
           EMPTY: {"red": 1, "green": 1, "blue": 1}}
-LEGACY_COLORS = {"Материалы отправлены": COLORS[SENT], PLANNED: COLORS[EMPTY]}
+LEGACY_COLORS = {"Материалы отправлены": COLORS[PLANNED], PLANNED: COLORS[EMPTY]}
 
 
 def status_day(value):
@@ -26,11 +25,9 @@ def status_day(value):
 def publication_status(day, description, current, today):
     if current == APPROVED:
         return APPROVED
-    if not assignment_cell(description)[1]:
-        return EMPTY
     if day < today:
         return EXPIRED
-    return PLANNED
+    return PLANNED if assignment_cell(description)[1] else EMPTY
 
 
 def rules_for(sheet_id, header_row):
@@ -91,7 +88,8 @@ class StatusSheets:
         metadata = self.request("GET", f"sheets/v4/spreadsheets/{book}", params={
             "fields": "sheets(properties(sheetId),merges,conditionalFormats)"})
         result = self.request("POST", f"sheets/v4/spreadsheets/{book}/values:batchGetByDataFilter", json={
-            "dataFilters": [{"gridRange": {"sheetId": sid}} for sid in ids], "valueRenderOption": "FORMATTED_VALUE"})
+            "dataFilters": [{"gridRange": {"sheetId": sid}} for sid in ids],
+            "valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "SERIAL_NUMBER"})
         values = {}
         for item in result.get("valueRanges", []):
             for data_filter in item.get("dataFilters", []):
@@ -130,7 +128,7 @@ class StatusSheets:
             self.request("POST", f"sheets/v4/spreadsheets/{book}:batchUpdate", json={"requests": requests})
 
     def set_status(self, project, task, status, url):
-        if status not in {SENT, APPROVED}:
+        if status not in {PLANNED, APPROVED}:
             raise ValueError("Неизвестный статус")
         if task.get("source_spreadsheet_id", project["spreadsheet_id"]) != project["spreadsheet_id"]:
             raise ValueError("Таблица проекта изменилась. Откройте дату заново")
@@ -159,6 +157,9 @@ class StatusSheets:
         sheet = next((s for s in metadata.get("sheets", []) if s["properties"]["sheetId"] == source["_sheet_id"]), None)
         if sheet is None:
             raise ValueError("Вкладка задания не найдена")
-        color_status = APPROVED if status == APPROVED else EXPIRED if task["day"] < datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat() else SENT
+        color_status = APPROVED if status == APPROVED else EXPIRED if task["day"] < datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat() else PLANNED
         self.request("POST", f"sheets/v4/spreadsheets/{source['spreadsheet_id']}:batchUpdate", json={
             "requests": format_updates(sheet, header) + [cell_update(source["_sheet_id"], number, color_status, COLORS[color_status])]})
+        confirmed = self.rows(source)
+        if number > len(confirmed) or not confirmed[number - 1] or str(confirmed[number - 1][0]) != color_status:
+            raise ValueError("Статус после записи не совпадает. Проверьте, что на сервере работает один экземпляр бота")

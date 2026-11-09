@@ -8,7 +8,7 @@ from docx import Document
 from google.auth.transport.requests import Request
 
 from .core import DEFAULT_COLUMNS, append_materials, assignment_cell, assignment_from_task, table_layout
-from .statuses import SENT, StatusSheets
+from .statuses import APPROVED, PLANNED, StatusSheets
 
 SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
 
@@ -206,6 +206,8 @@ def publish(google, store, key, project, task):
     if draft["published"] and not draft.get("dirty"):
         google.share(draft["folder"])
         google.set_link(project, row, headers, url)
+        if str(rows[row - 1][0]) != APPROVED:
+            google.set_status(project, task, PLANNED, url)
         return url
     if not draft["folder"] or not google.exists(draft["folder"]):
         draft["parent"] = draft.get("parent") or google.project_folder(store, project)
@@ -242,7 +244,7 @@ def publish(google, store, key, project, task):
     google.share(draft["folder"])
     url = f"https://drive.google.com/drive/folders/{draft['folder']}"
     google.set_link(project, row, headers, url)
-    google.set_status(project, task, SENT, url)
+    google.set_status(project, task, PLANNED, url)
     draft["published"] = True
     draft["dirty"] = False
     draft["approved"] = False

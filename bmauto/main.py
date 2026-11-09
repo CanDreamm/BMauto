@@ -17,7 +17,7 @@ from .oauth import GoogleMenus, ProjectGoogle
 from .oauth_server import connections_from_env
 from .projects import ProjectMenus
 from .vk import VK, back_footer, photo_format, photo_identity, photo_size
-from .statuses import APPROVED, EXPIRED, PLANNED, SENT
+from .statuses import APPROVED, EXPIRED, PLANNED
 
 DATE_PAGE_SIZE = 8
 DATE_COLUMN_SIZE = 4
@@ -103,7 +103,7 @@ class Bot:
         message = task_context(task)
         if task.get("material_url"):
             message += "\n\nГотовые материалы:\n" + task["material_url"]
-        if task.get("status") in {APPROVED, SENT, EXPIRED, PLANNED}:
+        if task.get("status") in {APPROVED, PLANNED, EXPIRED}:
             message += "\n\nСтатус: " + task["status"]
         return message
 
@@ -340,7 +340,7 @@ class Bot:
             self.vk.send(user, "Сохраняю материалы на Google Диск…", transient=True)
             url = publish(self.google_for(project), self.store, key, project, task)
             session["task"]["material_url"] = url
-            session["task"]["status"] = EXPIRED if task["day"] < datetime.now(self.zone).date().isoformat() else SENT
+            session["task"]["status"] = EXPIRED if task["day"] < datetime.now(self.zone).date().isoformat() else PLANNED
             self.store.save_session(user, session)
             self.vk.send(user, "Готово. Ссылка записана под описанием в D:\n" + url, self.task_buttons(session, project))
             return
