@@ -53,6 +53,10 @@ def button_color(label, payload):
     return payload.get("_color", "secondary")
 
 
+def back_footer(back, action=None):
+    return [("Назад", back)] + ([action] if action else [])
+
+
 def keyboard(buttons):
     rows = [item if isinstance(item, list) else [item] for item in buttons]
     def action(label, payload):

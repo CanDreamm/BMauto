@@ -1,3 +1,6 @@
+from .vk import back_footer
+
+
 class MemberMenus:
     def __init__(self, store, vk, admins):
         self.store, self.vk, self.admins = store, vk, admins
@@ -18,7 +21,7 @@ class MemberMenus:
             buttons.append(("Назад", {"a": "members", "page": page - 1}))
         if (page + 1) * 6 < len(members):
             buttons.append(("Далее", {"a": "members", "page": page + 1}))
-        buttons.extend([("Добавить участника", {"a": "member_add"}), ("Назад", {"a": "settings"})])
+        buttons.append(back_footer({"a": "settings"}, ("Добавить участника", {"a": "member_add", "_color": "positive"})))
         session = self.store.session(user)
         session.update(view="members", members_page=page, mode=None)
         session.pop("wizard", None)
@@ -30,7 +33,7 @@ class MemberMenus:
     def ask(self, user):
         project = self.store.projects()[self.store.session(user)["project"]]
         self.vk.send(user, f"Участник для проекта «{project['name']}». Отправьте числовой ID пользователя ВК или ссылку на его профиль. После добавления ему нужно написать сообществу «Начать».",
-                     [("Назад", {"a": "members"}), ("Меню проекта", {"a": "project_home"})])
+                     [back_footer({"a": "members"})])
 
     def handle(self, user, action, payload, text, session):
         if action not in {"members", "member_add", "member_remove", "member_remove_confirm"} and not (session.get("member_input") and session.get("view") == "member_add" and action is None):
@@ -53,9 +56,8 @@ class MemberMenus:
             session.update(view="member_remove", member_remove=target, mode=None)
             session.pop("member_input", None)
             self.store.save_session(user, session)
-            self.vk.send(user, f"Удалить https://vk.com/id{target} из этого проекта?", [
-                ("Да, удалить", {"a": "member_remove_confirm", "user": target}),
-                ("Назад", {"a": "members"}), ("Меню проекта", {"a": "project_home"})])
+            self.vk.send(user, f"Удалить https://vk.com/id{target} из этого проекта?", [back_footer(
+                {"a": "members"}, ("Да, удалить", {"a": "member_remove_confirm", "user": target, "_color": "negative"}))])
         elif action == "member_remove_confirm":
             target = payload.get("user")
             if session.get("view") != "member_remove" or type(target) is not int or target != session.get("member_remove"):

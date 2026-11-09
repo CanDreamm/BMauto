@@ -161,9 +161,9 @@ def test_bot_oauth_button_is_only_in_settings_and_uses_vk_link(connection):
     assert vk.messages[-1][1][0] == ("Подключить Google", {"a": "google_connect"})
     chat.send("google_connect")
     sent = keyboard(vk.messages[-1][1])["buttons"]
-    assert sent[0][0]["action"]["type"] == "open_link"
-    assert urlsplit(sent[0][0]["action"]["link"]).hostname == "accounts.google.com"
-    assert "color" not in sent[0][0]
+    assert sent[0][1]["action"]["type"] == "open_link"
+    assert urlsplit(sent[0][1]["action"]["link"]).hostname == "accounts.google.com"
+    assert "color" not in sent[0][1]
 
 
 def test_callback_handler_escapes_html_and_does_not_log_codes():
@@ -256,9 +256,9 @@ def test_assigned_member_connects_own_google_from_vk_settings(connection, monkey
     assert vk.messages[-1][1] == [("Test", {"a": "project", "p": "test"})]
     member.send("project", p="test")
     member.send("settings")
-    assert vk.messages[-1][1] == [("Подключить Google", {"a": "google_connect"}), ("Назад", {"a": "project_home"})]
+    assert vk.messages[-1][1] == [("Подключить Google", {"a": "google_connect"}), [("Назад", {"a": "project_home"})]]
     member.send("google_connect")
-    url = vk.messages[-1][1][0][1]["open_link"]
+    url = vk.messages[-1][1][0][1][1]["open_link"]
     assert "всеми участниками проекта" in vk.messages[-1][0]
     token_flow(monkeypatch, connection, refresh="member-account")
     connection.finish(state_of(url), "member-code")

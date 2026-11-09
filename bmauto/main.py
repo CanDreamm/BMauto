@@ -15,7 +15,7 @@ from .members import MemberMenus
 from .oauth import GoogleMenus, ProjectGoogle
 from .oauth_server import connections_from_env
 from .projects import ProjectMenus
-from .vk import VK, photo_format, photo_identity, photo_size
+from .vk import VK, back_footer, photo_format, photo_identity, photo_size
 from .statuses import APPROVED, EXPIRED, PLANNED, SENT
 
 
@@ -89,32 +89,28 @@ class Bot:
 
     def task_buttons(self, session, project):
         _, draft = self.draft_for(session, project)
-        navigation = [[("Назад", {"a": "task_home"}), ("Меню проекта", {"a": "project_home"})]]
+        navigation = [back_footer({"a": "task_home"})]
         send_button = None
         if (draft["text"].strip() or draft["photos"]) and (draft.get("dirty") or not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
-            label = ("Сохранить изменения" if draft.get("dirty") else "Добавить ссылку под заданием") if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
-            send_button = (label, {"a": "publish", "_color": "positive"})
+            send_button = ("Отправить в таблицу", {"a": "publish", "_color": "positive"})
         if session.get("mode") == "supplement":
-            return [("Без дополнений", {"a": "no_supplement"})] + navigation
+            return [back_footer({"a": "task_home"}, ("Без дополнений", {"a": "no_supplement", "_color": "positive"}))]
         if session.get("mode") == "text":
             return navigation
         if session.get("mode") == "photos":
             remove = [(f"Удалить фото {i}", {"a": "remove_photo", "id": photo["id"]}) for i, photo in enumerate(draft["photos"], 1)]
             rows = [remove[i:i + 3] for i in range(0, len(remove), 3)]
-            if remove:
-                rows.append(("Удалить все фото", {"a": "clear_photos", "_color": "negative"}))
-            return rows + navigation
+            clear = ("Удалить все фото", {"a": "clear_photos", "_color": "negative"}) if remove else None
+            return rows + [back_footer({"a": "task_home"}, clear)]
         buttons = []
         if draft["text"] or draft["photos"]:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
         buttons.append([("Редактировать текст" if draft["text"] else "Написать текст", {"a": "edit_text"}),
                         ("Сгенерировать заново" if draft["text"] else "Сгенерировать текст", {"a": "generate"})])
         buttons.append((f"Фотографии · {len(draft['photos'])}/9", {"a": "photos"}))
-        if send_button:
-            buttons.append(send_button)
-        elif session["task"].get("material_url") and not draft.get("dirty") and not draft.get("approved") and session["task"].get("status") != APPROVED:
-            buttons.append(("Согласовано", {"a": "approve", "_color": "positive"}))
-        return buttons + [("Назад", {"a": "project_home"})]
+        if not send_button and session["task"].get("material_url") and not draft.get("dirty") and not draft.get("approved") and session["task"].get("status") != APPROVED:
+            send_button = ("Согласовано", {"a": "approve", "_color": "positive"})
+        return buttons + [back_footer({"a": "project_home"}, send_button)]
 
     def render(self, user, session=None, notice=None):
         session = self.store.session(user) if session is None else session

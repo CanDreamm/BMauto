@@ -107,13 +107,14 @@ def test_dates_from_native_cells_and_formulas_get_statuses(project, value):
     assert google.tables[0][2][0] == status_formula(3)
 
 
-def test_settings_order_keeps_destructive_action_separate_from_back(tmp_path, project):
+def test_settings_footer_pairs_back_and_delete(tmp_path, project):
     bot, chat = selected_bot(tmp_path, project)
     chat.send("settings")
     rows = keyboard(bot.vk.messages[-1][1])["buttons"]
     assert [row[0]["action"]["label"] for row in rows] == [
-        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Удалить проект", "Назад"]
-    assert rows[-2][0]["color"] == "negative" and rows[-1][0]["color"] == "primary"
+        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Назад"]
+    assert rows[-1][0]["color"] == "primary" and rows[-1][1]["color"] == "negative"
+    assert rows[-1][1]["action"]["label"] == "Удалить проект"
 
 
 def test_sync_all_months_by_sheet_id_and_replaces_old_owned_rules(project):
@@ -177,13 +178,12 @@ def test_menu_order_and_publication_approval_edit_cycle(tmp_path, project):
     labels = [[b["action"]["label"] for b in row] for row in rows]
     assert labels[0] == ["Посмотреть черновик"]
     assert labels[1] == ["Редактировать текст", "Сгенерировать заново"]
-    assert labels[-2] == ["Отправить в таблицу"]
-    assert labels[-1] == ["Назад"]
+    assert labels[-1] == ["Назад", "Отправить в таблицу"]
     chat.send("publish")
     assert bot.google.table[2][0] == SENT
     assert "approve" in actions(bot)
     rows = keyboard(bot.vk.messages[-1][1])["buttons"]
-    assert rows[-2][0]["color"] == "positive"
+    assert rows[-1][1]["color"] == "positive"
     chat.send("approve")
     assert bot.google.table[2][0] == APPROVED and "approve" not in actions(bot)
     chat.send("edit_text")

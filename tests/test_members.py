@@ -18,7 +18,7 @@ def add_through_menu(bot, member=3):
     owner.send("project", p="test")
     owner.send("members")
     owner.send("member_add")
-    assert actions(bot) == {"members", "project_home"}
+    assert actions(bot) == {"members"}
     owner.send(text=f"https://vk.com/id{member}")
     assert bot.store.members("test")[member] == "member"
     return owner
@@ -104,7 +104,7 @@ def test_remove_confirm_and_revoke_stale_buttons(tmp_path, project):
     participant.send("task", i=0)
     owner.send("member_remove", user=3)
     assert bot.store.can_access("test", 3, bot.allowed)
-    assert actions(bot) == {"member_remove_confirm", "members", "project_home"}
+    assert actions(bot) == {"member_remove_confirm", "members"}
     owner.send("member_remove_confirm", user=3)
     assert not bot.store.can_access("test", 3, bot.allowed)
     assert "task" not in bot.store.session(3)
@@ -169,7 +169,7 @@ def test_members_keyboard_pagination_and_cancel(tmp_path, project):
     for user in range(3, 24):
         bot.store.add_member("test", 1, user, bot.allowed)
     owner.send("members", page=1)
-    assert len(bot.vk.messages[-1][1]) == 10
+    assert len(bot.vk.messages[-1][1]) == 9
     owner.send("member_add")
     owner.send("project_home")
     owner.send(text="100")

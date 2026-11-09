@@ -14,7 +14,7 @@ def all_buttons(bot):
 
 
 def confirmation(bot):
-    return json.loads(all_buttons(bot)[0]["action"]["payload"])
+    return next(json.loads(b["action"]["payload"]) for b in all_buttons(bot) if json.loads(b["action"]["payload"]).get("a") == "project_delete_confirm")
 
 
 def test_settings_have_red_delete_and_back_without_rename(tmp_path, project):
@@ -55,7 +55,7 @@ def test_delete_requires_red_confirmation_and_does_not_touch_google(tmp_path, pr
     chat.send("project", p="test")
     chat.send("project_delete")
     assert "test" in bot.store.projects()
-    assert all_buttons(bot)[0]["color"] == "negative"
+    assert all_buttons(bot)[1]["color"] == "negative"
     payload = confirmation(bot)
     chat.send(payload.pop("a"), **payload)
     assert "test" not in bot.store.projects()

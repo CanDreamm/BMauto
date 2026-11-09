@@ -3,6 +3,7 @@ import secrets
 import uuid
 from urllib.parse import urlsplit
 from .core import DEFAULT_COLUMNS
+from .vk import back_footer
 
 
 # Settings are edited independently after creating a project by name.
@@ -87,11 +88,10 @@ class ProjectMenus:
             buttons.extend((label, {"a": "project_edit", "field": key})
                            for key, label, _, _ in sorted(FIELDS, key=lambda field: field[0] != "spreadsheet_id"))
             buttons.append(("Участники", {"a": "members"}))
-            buttons.append(("Удалить проект", {"a": "project_delete", "_color": "negative"}))
-            buttons.append(("Назад", {"a": "project_home"}))
+            buttons.append(back_footer({"a": "project_home"}, ("Удалить проект", {"a": "project_delete", "_color": "negative"})))
         else:
             details.append("Вы можете подключить свой Google для этого проекта. Остальные настройки меняет владелец проекта")
-            buttons.append(("Назад", {"a": "project_home"}))
+            buttons.append(back_footer({"a": "project_home"}))
         message = (f"Настройки проекта «{project['name']}»\nВыберите параметр"
                    if self.store.can_manage(project["id"], user, self.admins) else "\n\n".join(details))
         self.vk.send(user, message, buttons)
@@ -119,8 +119,7 @@ class ProjectMenus:
         if wizard["kind"] == "create":
             buttons.append(("Назад", {"a": "projects"}))
         else:
-            buttons.extend([("Назад", {"a": "settings", "page": wizard.get("page", 0)}),
-                            ("Меню проекта", {"a": "project_home"})])
+            buttons.append(back_footer({"a": "settings", "page": wizard.get("page", 0)}))
         self.vk.send(user, prompt, buttons)
 
     def input_buttons(self, wizard):
@@ -237,6 +236,5 @@ class ProjectMenus:
 
     def show_delete(self, user, project, confirmation):
         self.managed(user, project["id"])
-        self.vk.send(user, f"Удалить проект «{project['name']}» из бота? Участники потеряют доступ. Файлы на Google Диске и данные таблицы останутся.", [
-            ("Да, удалить проект", {"a": "project_delete_confirm", "p": project["id"], "token": confirmation["token"], "_color": "negative"}),
-            ("Назад", {"a": "settings"})])
+        self.vk.send(user, f"Удалить проект «{project['name']}» из бота? Участники потеряют доступ. Файлы на Google Диске и данные таблицы останутся.", [back_footer(
+            {"a": "settings"}, ("Да, удалить проект", {"a": "project_delete_confirm", "p": project["id"], "token": confirmation["token"], "_color": "negative"}))])

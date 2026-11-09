@@ -65,7 +65,7 @@ def test_previously_uploaded_materials_can_be_linked_in_D_without_reupload(tmp_p
                  photos=[{"id": "old", "path": "not-needed-for-relink.jpg"}])
     bot.store.save_draft(key, draft)
     chat.send("task_home")
-    assert any(label == "Добавить ссылку под заданием" for label, _ in bot.vk.messages[-1][1])
+    assert bot.vk.messages[-1][1][-1][1] == ("Отправить в таблицу", {"a": "publish", "_color": "positive"})
     chat.send("publish")
     assert not bot.google.created
     assert bot.google.table[2][3] == append_materials("Текст", "https://drive.google.com/drive/folders/existing_folder")

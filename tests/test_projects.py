@@ -194,7 +194,7 @@ def test_create_only_name_then_independent_fields(tmp_path):
     assert actions(bot) == {"settings", "projects"}
     assert "dates" not in actions(bot)
     chat.send("project_edit", field="concept")
-    assert actions(bot) == {"settings", "project_home"}
+    assert actions(bot) == {"settings"}
     chat.send(text="Наша концепция")
     assert bot.store.projects()[project["id"]]["concept"] == "Наша концепция"
     assert bot.store.session(1)["view"] == "settings"
@@ -227,7 +227,7 @@ def test_return_to_settings_uses_one_screen(tmp_path, project):
     chat.send("project", p="test")
     chat.send("settings", page=1)
     chat.send("project_edit", field="concept")
-    back = next(p for _, p in bot.vk.messages[-1][1] if p["a"] == "settings")
+    back = next(p for item in bot.vk.messages[-1][1] for _, p in (item if isinstance(item, list) else [item]) if p["a"] == "settings")
     assert back["page"] == 0
     chat.send(**{"action": back["a"], "page": back["page"]})
     assert bot.store.session(1)["settings_page"] == 0
@@ -243,11 +243,11 @@ def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
     chat.send("task", i=0)
     assert actions(bot) == {"generate", "edit_text", "photos", "project_home"}
     chat.send("generate")
-    assert actions(bot) == {"no_supplement", "task_home", "project_home"}
+    assert actions(bot) == {"no_supplement", "task_home"}
     chat.send("task_home")
     assert bot.store.session(1)["mode"] is None
     chat.send("photos")
-    assert actions(bot) == {"task_home", "project_home"}
+    assert actions(bot) == {"task_home"}
     chat.send("task_home")
     key, draft = bot.draft_for(bot.store.session(1), project)
     draft["text"] = "Text"
