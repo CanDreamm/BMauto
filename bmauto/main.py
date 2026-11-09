@@ -89,11 +89,11 @@ class Bot:
 
     def task_buttons(self, session, project):
         _, draft = self.draft_for(session, project)
-        navigation = [("Назад", {"a": "task_home"}), ("Меню проекта", {"a": "project_home"})]
+        navigation = [[("Назад", {"a": "task_home"}), ("Меню проекта", {"a": "project_home"})]]
         send_button = None
         if (draft["text"].strip() or draft["photos"]) and (draft.get("dirty") or not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
             label = ("Сохранить изменения" if draft.get("dirty") else "Добавить ссылку под заданием") if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
-            send_button = (label, {"a": "publish", "_color": "primary"})
+            send_button = (label, {"a": "publish", "_color": "positive"})
         if session.get("mode") == "supplement":
             return [("Без дополнений", {"a": "no_supplement"})] + navigation
         if session.get("mode") == "text":
@@ -101,9 +101,12 @@ class Bot:
         if session.get("mode") == "photos":
             remove = [(f"Удалить фото {i}", {"a": "remove_photo", "id": photo["id"]}) for i, photo in enumerate(draft["photos"], 1)]
             rows = [remove[i:i + 3] for i in range(0, len(remove), 3)]
+            rows.append(("Сохранить", {"a": "done", "_color": "positive"}))
+            if send_button:
+                rows.append(("Отправить в таблицу", send_button[1]))
             if remove:
-                rows.append(("Убрать все фото", {"a": "clear_photos", "_color": "negative"}))
-            return rows + ([send_button] if send_button else []) + [("Готово", {"a": "done"})] + navigation
+                rows.append(("Удалить все фото", {"a": "clear_photos", "_color": "negative"}))
+            return rows + navigation
         buttons = []
         if draft["text"] or draft["photos"]:
             buttons.append(("Посмотреть черновик", {"a": "preview"}))
@@ -330,7 +333,7 @@ class Bot:
             session["mode"] = "photos"
             session["view"] = "photos"
             self.store.save_session(user, session)
-            self.vk.send(user, f"Прикрепляйте фотографии как фото ВК. Сохранено {len(draft['photos'])}/9. Затем нажмите «Готово».", self.task_buttons(session, project))
+            self.vk.send(user, f"Прикрепляйте фотографии как фото ВК. Сохранено {len(draft['photos'])}/9. Затем нажмите «Сохранить» или «Отправить в таблицу».", self.task_buttons(session, project))
             return
         if action == "done":
             session["mode"] = None
