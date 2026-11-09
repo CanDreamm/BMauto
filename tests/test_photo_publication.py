@@ -22,7 +22,7 @@ def test_one_photo_is_sent_from_task_menu_after_saving(tmp_path, project, with_t
         {"type": "photo", "photo": {"owner_id": 1, "id": 5, "sizes": [{"width": 100, "height": 100, "url": "photo"}]}}
     ]))
     assert "publish" not in actions(bot)
-    chat.send("done")
+    chat.send("task_home")
     assert "publish" in actions(bot)
     chat.send("publish")
     assert bot.google.created == (["publication.docx"] if with_text else []) + ["photo_01.jpg"]

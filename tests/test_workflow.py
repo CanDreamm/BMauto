@@ -197,7 +197,7 @@ def test_vk_full_flow_and_photo_limit(tmp_path, project):
     assert any("не сохранена" in text for text, _ in vk.messages)
     send(attachments=photos[:9])
     assert "9/9" in vk.messages[-1][0]
-    send("done")
+    send("task_home")
     send("publish")
     assert "Ссылка записана под описанием в D" in vk.messages[-1][0]
     assert len(google.created) == 10

@@ -247,8 +247,8 @@ def test_task_keyboard_matches_draft_and_input_step(tmp_path, project):
     chat.send("task_home")
     assert bot.store.session(1)["mode"] is None
     chat.send("photos")
-    assert actions(bot) == {"done", "task_home", "project_home"}
-    chat.send("done")
+    assert actions(bot) == {"task_home", "project_home"}
+    chat.send("task_home")
     key, draft = bot.draft_for(bot.store.session(1), project)
     draft["text"] = "Text"
     draft["photos"] = [{"id": str(i), "path": "unused"} for i in range(9)]

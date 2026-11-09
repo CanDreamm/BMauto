@@ -75,7 +75,7 @@ def test_nine_photos_in_single_message_and_duplicates(tmp_path, project):
     _, draft = bot.draft_for(bot.store.session(1), project)
     assert len(draft["photos"]) == 9
     assert len(keyboard(bot.vk.messages[-1][1])["buttons"]) <= 10
-    chat.send("done")
+    chat.send("task_home")
     chat.send("publish")
     assert len(bot.google.created) == 9
 
@@ -123,7 +123,7 @@ def test_replace_and_remove_published_photos_only_trashes_managed_files(tmp_path
     bot.google.files["external"] = b"user file"
     chat.send("photos")
     chat.send("remove_photo", id="1_2")
-    chat.send("done")
+    chat.send("task_home")
     chat.send("publish")
     after = bot.store.draft(key)
     assert bot.google.files[after["uploads"]["photo_02.jpg"]["id"]] == b"\xff\xd83"
@@ -132,7 +132,7 @@ def test_replace_and_remove_published_photos_only_trashes_managed_files(tmp_path
     chat.send("photos")
     chat.send("clear_photos")
     send_photos(bot, 4)
-    chat.send("done")
+    chat.send("task_home")
     chat.send("publish")
     assert list(bot.store.draft(key)["uploads"]) == ["photo_01.jpg"]
     assert bot.google.files[before["uploads"]["photo_01.jpg"]["id"]] == b"\xff\xd84"
@@ -161,7 +161,7 @@ def test_clear_all_photos_keeps_published_text(tmp_path, project):
     chat.send("publish")
     chat.send("photos")
     chat.send("clear_photos")
-    chat.send("done")
+    chat.send("task_home")
     chat.send("publish")
     _, draft = bot.draft_for(bot.store.session(1), project)
     assert set(draft["uploads"]) == {"publication.docx"}
