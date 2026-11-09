@@ -275,7 +275,10 @@ class Bot:
             self.render(user, notice="Это действие сейчас недоступно. Выберите кнопку текущего меню")
             return
         if action == "preview":
-            self.vk.send(user, f"{draft['text'] or 'Текст пока не создан'}\n\nФото: {len(draft['photos'])}/9", self.task_buttons(session, project))
+            photos = [(self.store.root / photo["path"], photo.get("mime", "image/jpeg")) for photo in draft["photos"]]
+            if photos:
+                self.vk.send(user, "Готовлю предпросмотр черновика…")
+            self.vk.send_draft(user, draft["text"] or "Текст пока не создан", photos, self.task_buttons(session, project))
             return
         if action == "approve":
             if draft.get("dirty"):

@@ -3,6 +3,7 @@ import json
 import re
 import secrets
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -70,13 +71,41 @@ class VK:
             raise ValueError(f"Ошибка VK API {body['error'].get('error_code')}")
         return body["response"]
 
-    def send(self, peer, message, buttons=None):
+    def send(self, peer, message, buttons=None, attachments=None):
         chunks = [message[i:i+3500] for i in range(0, len(message), 3500)] or ["—"]
         for i, chunk in enumerate(chunks):
             args = {"peer_id": peer, "message": chunk, "random_id": secrets.randbelow(2**31 - 1) + 1}
+            if attachments and i == 0:
+                args["attachment"] = ",".join(attachments)
             if buttons is not None and i == len(chunks) - 1:
                 args["keyboard"] = json.dumps(keyboard(buttons), ensure_ascii=False)
             self.call("messages.send", **args)
+
+    def send_draft(self, peer, text, photos, buttons):
+        for path, _ in photos:
+            if not Path(path).is_file():
+                raise ValueError("Не найден сохранённый файл фото черновика. Загрузите это фото повторно")
+        attachments = []
+        for path, mime in photos:
+            server = self.call("photos.getMessagesUploadServer", peer_id=peer)
+            url = server["upload_url"]
+            parsed = urlsplit(url)
+            if parsed.scheme != "https" or not any((parsed.hostname or "") == host or (parsed.hostname or "").endswith("." + host)
+                                                    for host in ("vk.com", "vk.ru", "userapi.com", "vkuserphoto.ru")):
+                raise ValueError("ВК вернул неподдерживаемый адрес загрузки фото")
+            with Path(path).open("rb") as photo:
+                response = self.http.post(url, files={"photo": (Path(path).name, photo, mime)})
+            response.raise_for_status()
+            uploaded = response.json()
+            saved = self.call("photos.saveMessagesPhoto", server=uploaded["server"], photo=uploaded["photo"], hash=uploaded["hash"])
+            if not saved:
+                raise ValueError("ВК не сохранил фото для предпросмотра. Повторите просмотр черновика")
+            item = saved[0]
+            reference = f"photo{item['owner_id']}_{item['id']}"
+            if item.get("access_key"):
+                reference += "_" + item["access_key"]
+            attachments.append(reference)
+        self.send(peer, text, buttons, attachments=attachments)
 
     def full_photo_message(self, message):
         """Long Poll can supply incomplete photo metadata; re-read the message."""

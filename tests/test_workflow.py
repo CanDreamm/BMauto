@@ -153,9 +153,14 @@ def test_existing_link_not_overwritten(tmp_path, project):
 class FakeVK:
     def __init__(self):
         self.messages = []
+        self.previews = []
 
     def send(self, user, text, buttons=None):
         self.messages.append((text, buttons))
+
+    def send_draft(self, user, text, photos, buttons):
+        self.previews.append((user, text, photos))
+        self.send(user, text, buttons)
 
     def full_photo_message(self, message):
         return message
