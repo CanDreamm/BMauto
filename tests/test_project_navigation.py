@@ -142,3 +142,53 @@ def test_vk_send_transmits_real_two_column_keyboard(tmp_path, project):
     assert [len(row) for row in sent["buttons"]] == [2, 2, 1, 1]
     assert sent["buttons"][-2][0]["action"]["label"] == "Настройки"
     assert sent["buttons"][-1][0]["action"]["label"] == "Все проекты"
+
+
+@pytest.mark.parametrize("status,url,prefix", [
+    ("Запланировано", None, ""),
+    ("Материалы отправлены", "https://drive.google.com/drive/folders/test", "🟡 "),
+    ("Согласовано", "https://drive.google.com/drive/folders/test", "🟢 "),
+])
+def test_dates_show_material_status_emoji(tmp_path, project, status, url, prefix):
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    session = bot.store.session(1)
+    session["tasks"][0].update(status=status, material_url=url)
+    bot.show_dates(1, session)
+    button = serialized(bot)[0][0]
+    label = button["action"]["label"]
+    assert label.startswith(prefix)
+    if not prefix:
+        assert not label.startswith(("🟡", "🟢"))
+    assert json.loads(button["action"]["payload"]) == {"a": "task", "i": 0}
+    assert serialized(bot)[-2][0]["color"] == "primary"
+    assert serialized(bot)[-1][0]["color"] == "primary"
+
+
+def test_missing_prompt_does_not_add_settings_shortcuts_to_task_menus(tmp_path, project):
+    project["prompt"] = ""
+    bot = bot_at(tmp_path, {"projects": [project]})
+    chat = Conversation(bot)
+    chat.send("project", p="test")
+    chat.send("task", i=0)
+    assert "settings" not in actions(bot)
+    chat.send("photos")
+    assert "settings" not in actions(bot)
+    chat.send("task_home")
+    chat.send("edit_text")
+    assert "settings" not in actions(bot)
+    for row in serialized(bot):
+        for button in row:
+            if button["action"]["label"] in {"Назад", "Меню проекта"}:
+                assert button["color"] == "primary"
+    chat.send("task_home")
+    chat.send("project_home")
+    assert "settings" in actions(bot)
+
+
+def test_shared_navigation_colors_and_green_create_project():
+    from bmauto.vk import keyboard
+    buttons = keyboard([(label, {"a": "test"}) for label in (
+        "Назад", "Меню проекта", "Настройки", "Все проекты", "Создать проект")])["buttons"]
+    assert [row[0]["color"] for row in buttons] == ["primary"] * 4 + ["positive"]

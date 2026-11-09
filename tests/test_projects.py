@@ -287,7 +287,7 @@ def test_missing_generation_settings_keep_button_and_explain_setup(tmp_path, pro
     chat.send("project", p="test")
     chat.send("dates")
     chat.send("task", i=0)
-    assert "generate" in actions(bot) and "settings" in actions(bot)
+    assert "generate" in actions(bot) and "settings" not in actions(bot)
     chat.send("generate")
     assert "Промпт" in bot.vk.messages[-1][0]
     assert "настройках проекта" in bot.vk.messages[-1][0]

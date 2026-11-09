@@ -88,7 +88,7 @@ class ProjectMenus:
                            for key, label, _, _ in sorted(FIELDS, key=lambda field: field[0] != "spreadsheet_id"))
             buttons.append(("Участники", {"a": "members"}))
             buttons.append(("Удалить проект", {"a": "project_delete", "_color": "negative"}))
-            buttons.append(("Назад к датам", {"a": "project_home"}))
+            buttons.append(("Назад", {"a": "project_home"}))
         else:
             details.append("Вы можете подключить свой Google для этого проекта. Остальные настройки меняет владелец проекта")
             buttons.append(("Назад", {"a": "project_home"}))
@@ -117,10 +117,10 @@ class ProjectMenus:
         if default is not None:
             buttons = [(f"Оставить: {default}", {"a": "project_default"})]
         if wizard["kind"] == "create":
-            buttons.append(("В меню", {"a": "projects"}))
+            buttons.append(("Назад", {"a": "projects"}))
         else:
-            buttons.extend([("Назад к настройкам", {"a": "settings", "page": wizard.get("page", 0)}),
-                            ("К датам проекта", {"a": "project_home"})])
+            buttons.extend([("Назад", {"a": "settings", "page": wizard.get("page", 0)}),
+                            ("Меню проекта", {"a": "project_home"})])
         self.vk.send(user, prompt, buttons)
 
     def input_buttons(self, wizard):
@@ -239,4 +239,4 @@ class ProjectMenus:
         self.managed(user, project["id"])
         self.vk.send(user, f"Удалить проект «{project['name']}» из бота? Участники потеряют доступ. Файлы на Google Диске и данные таблицы останутся.", [
             ("Да, удалить проект", {"a": "project_delete_confirm", "p": project["id"], "token": confirmation["token"], "_color": "negative"}),
-            ("Отмена", {"a": "settings"})])
+            ("Назад", {"a": "settings"})])

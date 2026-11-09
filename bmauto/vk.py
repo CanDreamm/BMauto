@@ -17,6 +17,14 @@ def photo_format(content):
     raise ValueError("Прикрепите фото JPEG, PNG или WebP")
 
 
+def button_color(label, payload):
+    if label in {"Назад", "Меню проекта", "Настройки", "Все проекты"}:
+        return "primary"
+    if label == "Создать проект":
+        return "positive"
+    return payload.get("_color", "secondary")
+
+
 def keyboard(buttons):
     rows = [item if isinstance(item, list) else [item] for item in buttons]
     def action(label, payload):
@@ -24,7 +32,7 @@ def keyboard(buttons):
             return {"type": "open_link", "label": label[:40], "link": payload["open_link"]}
         return {"type": "text", "label": label[:40], "payload": json.dumps({k: v for k, v in payload.items() if k != "_color"})}
     return {"inline": False, "one_time": False, "buttons": [
-        [({"action": action(label, payload)} if "open_link" in payload else {"action": action(label, payload), "color": payload.get("_color", "secondary")})
+        [({"action": action(label, payload)} if "open_link" in payload else {"action": action(label, payload), "color": button_color(label, payload)})
          for label, payload in row] for row in rows
     ]}
 

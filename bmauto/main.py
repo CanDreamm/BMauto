@@ -89,10 +89,7 @@ class Bot:
 
     def task_buttons(self, session, project):
         _, draft = self.draft_for(session, project)
-        navigation = [("К заданию", {"a": "task_home"}), ("Меню проекта", {"a": "project_home"})]
-        missing = self.missing_generation_settings(project)
-        if missing:
-            navigation.insert(0, ("Настройки проекта", {"a": "settings"}))
+        navigation = [("Назад", {"a": "task_home"}), ("Меню проекта", {"a": "project_home"})]
         send_button = None
         if (draft["text"].strip() or draft["photos"]) and (draft.get("dirty") or not draft["published"] or session["task"].get("material_url") != f"https://drive.google.com/drive/folders/{draft['folder']}"):
             label = ("Сохранить изменения" if draft.get("dirty") else "Добавить ссылку под заданием") if draft["published"] else "Повторить отправку" if draft["folder"] else "Отправить в таблицу"
@@ -117,9 +114,7 @@ class Bot:
             buttons.append(send_button)
         elif session["task"].get("material_url") and not draft.get("dirty") and not draft.get("approved") and session["task"].get("status") != APPROVED:
             buttons.append(("Согласовано", {"a": "approve", "_color": "positive"}))
-        if missing:
-            buttons.append(("Настройки проекта", {"a": "settings"}))
-        return buttons + [("К датам проекта", {"a": "project_home"})]
+        return buttons + [("Назад", {"a": "project_home"})]
 
     def render(self, user, session=None, notice=None):
         session = self.store.session(user) if session is None else session
@@ -395,6 +390,10 @@ class Bot:
         for i, task in enumerate(tasks):
             if page * 12 <= i < (page + 1) * 12:
                 label = f"{datetime.fromisoformat(task['day']):%d.%m.%Y} — {task['weekday']}"
+                if task.get("status") == APPROVED:
+                    label = "🟢 " + label
+                elif task.get("status") == SENT or task.get("material_url"):
+                    label = "🟡 " + label
                 if days.count(task["day"]) > 1:
                     label += f" · {task['row']}"
                 date_buttons.append((label, {"a": "task", "i": i}))

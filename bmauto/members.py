@@ -18,7 +18,7 @@ class MemberMenus:
             buttons.append(("Назад", {"a": "members", "page": page - 1}))
         if (page + 1) * 6 < len(members):
             buttons.append(("Далее", {"a": "members", "page": page + 1}))
-        buttons.extend([("Добавить участника", {"a": "member_add"}), ("К настройкам", {"a": "settings"})])
+        buttons.extend([("Добавить участника", {"a": "member_add"}), ("Назад", {"a": "settings"})])
         session = self.store.session(user)
         session.update(view="members", members_page=page, mode=None)
         session.pop("wizard", None)
@@ -30,7 +30,7 @@ class MemberMenus:
     def ask(self, user):
         project = self.store.projects()[self.store.session(user)["project"]]
         self.vk.send(user, f"Участник для проекта «{project['name']}». Отправьте числовой ID пользователя ВК или ссылку на его профиль. После добавления ему нужно написать сообществу «Начать».",
-                     [("К участникам", {"a": "members"}), ("Меню проекта", {"a": "project_home"})])
+                     [("Назад", {"a": "members"}), ("Меню проекта", {"a": "project_home"})])
 
     def handle(self, user, action, payload, text, session):
         if action not in {"members", "member_add", "member_remove", "member_remove_confirm"} and not (session.get("member_input") and session.get("view") == "member_add" and action is None):
@@ -55,7 +55,7 @@ class MemberMenus:
             self.store.save_session(user, session)
             self.vk.send(user, f"Удалить https://vk.com/id{target} из этого проекта?", [
                 ("Да, удалить", {"a": "member_remove_confirm", "user": target}),
-                ("Отмена", {"a": "members"}), ("Меню проекта", {"a": "project_home"})])
+                ("Назад", {"a": "members"}), ("Меню проекта", {"a": "project_home"})])
         elif action == "member_remove_confirm":
             target = payload.get("user")
             if session.get("view") != "member_remove" or type(target) is not int or target != session.get("member_remove"):

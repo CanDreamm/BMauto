@@ -112,8 +112,8 @@ def test_settings_order_keeps_destructive_action_separate_from_back(tmp_path, pr
     chat.send("settings")
     rows = keyboard(bot.vk.messages[-1][1])["buttons"]
     assert [row[0]["action"]["label"] for row in rows] == [
-        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Удалить проект", "Назад к датам"]
-    assert rows[-2][0]["color"] == "negative" and rows[-1][0]["color"] == "secondary"
+        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Удалить проект", "Назад"]
+    assert rows[-2][0]["color"] == "negative" and rows[-1][0]["color"] == "primary"
 
 
 def test_sync_all_months_by_sheet_id_and_replaces_old_owned_rules(project):
@@ -178,7 +178,7 @@ def test_menu_order_and_publication_approval_edit_cycle(tmp_path, project):
     assert labels[0] == ["Посмотреть черновик"]
     assert labels[1] == ["Редактировать текст", "Сгенерировать заново"]
     assert labels[-2] == ["Отправить в таблицу"]
-    assert labels[-1] == ["К датам проекта"]
+    assert labels[-1] == ["Назад"]
     chat.send("publish")
     assert bot.google.table[2][0] == SENT
     assert "approve" in actions(bot)

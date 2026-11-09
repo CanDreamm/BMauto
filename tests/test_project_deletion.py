@@ -27,7 +27,7 @@ def test_settings_have_red_delete_and_back_without_rename(tmp_path, project):
         delete = next(b for b in buttons if b["action"]["label"] == "Удалить проект")
         assert delete["color"] == "negative"
         assert "_color" not in json.loads(delete["action"]["payload"])
-        assert any(b["action"]["label"] == "Назад к датам" for b in buttons)
+        assert any(b["action"]["label"] == "Назад" for b in buttons)
         assert not any(b["action"]["label"] == "Название" for b in buttons)
         assert len(keyboard(bot.vk.messages[-1][1])["buttons"]) <= 10
     chat.send("project_home")

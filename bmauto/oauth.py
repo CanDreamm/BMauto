@@ -154,5 +154,5 @@ class GoogleMenus:
         self.store.save_session(user, session)
         project = self.store.projects()[session["project"]]
         self.vk.send(user, f"Подключение Google для проекта «{project['name']}». Войдите в свой аккаунт и разрешите доступ к Диску и Таблицам. Этот аккаунт будет использоваться всеми участниками проекта и заменит прежнее подключение. Ссылка действует 10 минут; не пересылайте её. После подключения вернитесь к датам проекта.",
-                     [("Войти в Google", {"open_link": url}), ("К настройкам", {"a": "settings"}), ("К датам проекта", {"a": "project_home"})])
+                     [("Войти в Google", {"open_link": url}), ("Назад", {"a": "settings"}), ("Меню проекта", {"a": "project_home"})])
         return True
