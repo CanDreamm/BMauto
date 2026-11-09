@@ -206,8 +206,7 @@ def publish(google, store, key, project, task):
     if draft["published"] and not draft.get("dirty"):
         google.share(draft["folder"])
         google.set_link(project, row, headers, url)
-        if str(rows[row - 1][0]) != APPROVED:
-            google.set_status(project, task, PLANNED, url)
+        google.set_status(project, task, APPROVED if str(rows[row - 1][0]) == APPROVED else PLANNED, url)
         return url
     if not draft["folder"] or not google.exists(draft["folder"]):
         draft["parent"] = draft.get("parent") or google.project_folder(store, project)
