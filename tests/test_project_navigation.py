@@ -41,8 +41,8 @@ def test_select_project_directly_shows_two_column_dates_and_only_two_footer_butt
     many_dates(bot.google, 5)
     Conversation(bot).send("project", p="test")
     rows = serialized(bot)
-    assert [len(row) for row in rows] == [2, 2, 1, 1, 1]
-    assert [payload(b)["i"] for row in rows[:-2] for b in row] == list(range(5))
+    assert [len(row) for row in rows] == [2, 1, 1, 1, 1, 1]
+    assert [payload(b)["i"] for row in rows[:-2] for b in row] == [0, 4, 1, 2, 3]
     assert rows[0][0]["action"]["label"] == "02.01.3000 — Среда"
     assert rows[-2][0]["action"]["label"] == "Настройки"
     assert rows[-1][0]["action"]["label"] == "Все проекты"
@@ -56,20 +56,20 @@ def test_dates_pagination_retains_pairs_and_selects_correct_task(tmp_path, proje
     chat = Conversation(bot)
     chat.send("project", p="test")
     first_page = serialized(bot)
-    assert len(first_page) == 9 and all(len(row) == 2 for row in first_page[:6])
+    assert len(first_page) == 7 and all(len(row) == 2 for row in first_page[:4])
     chat.send("page", page=1)
     middle = serialized(bot)
-    assert len(middle) == 9 and len(middle[-3]) == 2
-    assert [payload(b)["i"] for row in middle[:6] for b in row] == list(range(12, 24))
-    chat.send("task", i=17)
-    assert "Задание: Задание 17" in bot.vk.messages[-1][0]
+    assert len(middle) == 7 and len(middle[-3]) == 2
+    assert [payload(b)["i"] for row in middle[:4] for b in row] == [8, 12, 9, 13, 10, 14, 11, 15]
+    chat.send("task", i=13)
+    assert "Задание: Задание 13" in bot.vk.messages[-1][0]
     chat.send("project_home")
     assert actions(bot) == {"task", "page", "settings", "projects"}
     assert "task" not in bot.store.session(1)
-    chat.send("page", page=2)
+    chat.send("page", page=3)
     last = serialized(bot)
-    assert [len(row) for row in last[:3]] == [2, 2, 1]
-    assert [payload(b)["i"] for row in last[:3] for b in row] == list(range(24, 29))
+    assert [len(row) for row in last[:4]] == [2, 1, 1, 1]
+    assert [payload(b)["i"] for row in last[:4] for b in row] == [24, 28, 25, 26, 27]
 
 
 def test_new_project_and_empty_calendar_have_exact_footer(tmp_path, project):
@@ -131,7 +131,7 @@ def test_settings_contain_fields_and_members_without_nested_settings_button(tmp_
 
 def test_vk_send_transmits_real_two_column_keyboard(tmp_path, project):
     bot = bot_at(tmp_path, {"projects": [project]})
-    many_dates(bot.google, 4)
+    many_dates(bot.google, 8)
     Conversation(bot).send("project", p="test")
     vk = VK.__new__(VK)
     calls = []
@@ -139,7 +139,7 @@ def test_vk_send_transmits_real_two_column_keyboard(tmp_path, project):
     text, buttons = bot.vk.messages[-1]
     vk.send(1, text, buttons)
     sent = json.loads(calls[0][1]["keyboard"])
-    assert [len(row) for row in sent["buttons"]] == [2, 2, 1, 1]
+    assert [len(row) for row in sent["buttons"]] == [2, 2, 2, 2, 1, 1]
     assert sent["buttons"][-2][0]["action"]["label"] == "Настройки"
     assert sent["buttons"][-1][0]["action"]["label"] == "Все проекты"
 

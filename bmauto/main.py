@@ -19,6 +19,9 @@ from .projects import ProjectMenus
 from .vk import VK, back_footer, photo_format, photo_identity, photo_size
 from .statuses import APPROVED, EXPIRED, PLANNED, SENT
 
+DATE_PAGE_SIZE = 8
+DATE_COLUMN_SIZE = 4
+
 
 class Bot:
     def __init__(self, config, store, vk, google, llm, allowed, connections=None):
@@ -426,13 +429,13 @@ class Bot:
     def show_dates(self, user, session):
         project = self.store.projects()[session["project"]]
         tasks = session.get("tasks", [])
-        page = min(max(0, session.get("page", 0)), max(0, (len(tasks) - 1) // 12))
+        page = min(max(0, session.get("page", 0)), max(0, (len(tasks) - 1) // DATE_PAGE_SIZE))
         session["page"] = page
         self.store.save_session(user, session)
         date_buttons = []
         days = [t["day"] for t in tasks]
         for i, task in enumerate(tasks):
-            if page * 12 <= i < (page + 1) * 12:
+            if page * DATE_PAGE_SIZE <= i < (page + 1) * DATE_PAGE_SIZE:
                 label = f"{datetime.fromisoformat(task['day']):%d.%m.%Y} — {task['weekday']}"
                 if task.get("status") == APPROVED:
                     label = "🟢 " + label
@@ -441,11 +444,12 @@ class Bot:
                 if days.count(task["day"]) > 1:
                     label += f" · {task['row']}"
                 date_buttons.append((label, {"a": "task", "i": i}))
-        rows = [date_buttons[i:i + 2] for i in range(0, len(date_buttons), 2)]
+        rows = [[date_buttons[i]] + ([date_buttons[i + DATE_COLUMN_SIZE]] if i + DATE_COLUMN_SIZE < len(date_buttons) else [])
+                for i in range(min(DATE_COLUMN_SIZE, len(date_buttons)))]
         pagination = []
         if page:
             pagination.append(("Назад", {"a": "page", "page": page - 1}))
-        if (page + 1) * 12 < len(tasks):
+        if (page + 1) * DATE_PAGE_SIZE < len(tasks):
             pagination.append(("Далее", {"a": "page", "page": page + 1}))
         if pagination:
             rows.append(pagination)

@@ -23,12 +23,14 @@ def layout(header_row=2, extra_channel=False):
 @pytest.mark.parametrize("header_row", [2, 3])
 def test_detects_actual_header_row_without_link_column(header_row):
     rows = layout(header_row)
-    rows.extend([["", "07.11.2026", "Суббота"], [], ["", "", "", "Заметка без даты"]])
+    rows.extend([["", "07.11.2026", "Суббота"], [], ["", "", "", "Заметка без даты"],
+                 ["", "08.11.2026", "Воскресенье", "  ", "Заполнен только другой канал"],
+                 ["", "09.11.2026", "Понедельник", append_materials("", URL)]])
     detected, headers = table_layout(rows)
     tasks = tasks_from_rows(rows, {}, date(2026, 11, 5))
     assert detected == header_row
     assert len(headers) == 7 and "Ссылка" not in headers
-    assert [(t.row, t.day.isoformat()) for t in tasks] == [(header_row + 1, "2026-11-06"), (header_row + 2, "2026-11-07")]
+    assert [(t.row, t.day.isoformat()) for t in tasks] == [(header_row + 1, "2026-11-06")]
     assert tasks[0].header_row == header_row
     assert "Задание: Фото и текст по заданию" in tasks[0].description()
     assert "Чужой канал" not in tasks[0].description()

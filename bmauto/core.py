@@ -101,6 +101,8 @@ def tasks_from_rows(rows, project, today):
             if len(headers) < 4:
                 raise ValueError("Задание должно находиться в столбце D")
             description, material_url = assignment_cell(row[3] if len(row) > 3 else "")
+            if not description.strip():
+                continue
             result.append(Task(number, day, fields[project["weekday_column"]], fields, header_row, description, material_url,
                                str(row[0]) if row else ""))
     return sorted(result, key=lambda t: (t.day, t.row))
