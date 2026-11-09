@@ -10,3 +10,21 @@ location = /oauth/google/callback {
     access_log off;
     error_log /dev/null;
 }
+
+# Secret project dashboard links must not appear in logs.
+location ^~ /monitor/ {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 100s;
+    access_log off;
+    error_log /dev/null;
+}
+
+location ^~ /monitor-assets/ {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 15s;
+}

@@ -17,3 +17,6 @@ bmauto = "bmauto.main:main"
 
 [tool.setuptools.packages.find]
 include = ["bmauto*"]
+
+[tool.setuptools.package-data]
+bmauto = ["web/*.html", "web/*.css", "web/*.js"]

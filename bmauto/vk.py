@@ -218,7 +218,7 @@ class VK:
                 except (VKAPIError, httpx.HTTPError):
                     print("Не удалось подтвердить нажатие кнопки ВК.", flush=True)
         try:
-            if payload.get("a") != "google_open":
+            if payload.get("a") not in {"google_open", "monitor_open"}:
                 acknowledge()
             if payload.get("a") != "noop":
                 handler({"id": 0, "from_id": callback["user_id"], "peer_id": callback["peer_id"],

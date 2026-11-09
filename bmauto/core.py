@@ -1,5 +1,6 @@
 import json
 import re
+import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -113,8 +114,10 @@ class Store:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.root / "state.sqlite3")
+        (self.root / "state.sqlite3").chmod(0o600)
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS monitor_links (project_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
         self.db.execute("CREATE TABLE IF NOT EXISTS vk_chat_messages (peer INTEGER NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(peer,key))")
         self.db.execute("CREATE TABLE IF NOT EXISTS handled_messages (user INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(user,event))")
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
@@ -153,6 +156,19 @@ class Store:
     def projects(self):
         return {key: project for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")
                 if not (project := json.loads(body)).get("deleted_at")}
+
+    def monitor_token(self, project_id, rotate=False):
+        if project_id not in self.projects():
+            raise ValueError("Проект не найден")
+        with self.db:
+            if rotate:
+                self.db.execute("DELETE FROM monitor_links WHERE project_id=?", (project_id,))
+            self.db.execute("INSERT OR IGNORE INTO monitor_links VALUES (?,?)", (project_id, secrets.token_urlsafe(32)))
+            return self.db.execute("SELECT token FROM monitor_links WHERE project_id=?", (project_id,)).fetchone()[0]
+
+    def monitor_project(self, token):
+        row = self.db.execute("SELECT project_id FROM monitor_links WHERE token=?", (token,)).fetchone()
+        return self.projects().get(row[0]) if row else None
 
     def save_project(self, project, expected_revision=None, owner=None):
         with self.db:

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="color-scheme" content="light">
+  <title>$title · Мониторинг</title>
+  <link rel="stylesheet" href="/monitor-assets/monitor.css?v=$assets">
+  <script defer src="/monitor-assets/monitor.js?v=$assets"></script>
+</head>
+<body>
+  <header class="topbar"><div class="topbar-inner"><a class="brand" href="$refresh" aria-label="Обновить мониторинг">BM<span>auto</span><b> / </b><small>Публикации</small></a><span class="read-only"><i></i>Только просмотр</span></div></header>
+  <main>
+    <section class="project-heading"><div><p class="eyebrow">МОНИТОРИНГ ПРОЕКТА</p><h1>$title</h1><p class="subtitle">Контент-план и готовность публикаций — всё на одном экране.</p></div><a class="refresh" href="$refresh"><span aria-hidden="true">↻</span> Обновить</a></section>
+    <section class="stats" id="stats" aria-label="Сводка месяца">$stats</section>
+    <section class="plan" aria-labelledby="month-title">
+      <div class="plan-heading"><div><h2 id="month-title">$month</h2><span class="plan-caption">План публикаций</span></div><div class="update-status" id="update-status" role="status"><i></i>Обновлено <time>$updated</time></div></div>
+      <p class="scroll-note">Прокрутите таблицу вправо, чтобы увидеть задания →</p>
+      <div class="table-scroll"><table><thead><tr><th scope="col">Статус</th><th scope="col">Дата</th><th scope="col">День</th><th scope="col">Задание</th></tr></thead><tbody id="plan-rows">$rows</tbody></table></div>
+      <div class="table-note"><span>Изменения из Google Таблицы появляются автоматически</span><span>Обновление раз в минуту</span></div>
+    </section>
+    <p class="page-note">Чтобы изменить задание или подготовить материалы, откройте проект в боте.</p>
+  </main>
+  <nav class="months" aria-label="Месяцы контент-плана"><div class="months-inner"><span class="tabs-caption">МЕСЯЦ</span>$tabs</div></nav>
+</body>
+</html>

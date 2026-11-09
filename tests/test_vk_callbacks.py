@@ -157,9 +157,10 @@ def test_blank_callback_only_acknowledges_and_never_sends_a_message(tmp_path):
     assert 'event_data' not in api.calls[0][1]
 
 
-def test_google_link_opens_from_callback_without_chat_message(tmp_path):
+@pytest.mark.parametrize("action", ["google_open", "monitor_open"])
+def test_browser_link_opens_from_callback_without_chat_message(tmp_path, action):
     vk, api = client(tmp_path)
-    vk.handle_callback(event('google_open'), lambda message: vk.open_callback_link(1, 'https://accounts.google.com/auth'))
+    vk.handle_callback(event(action), lambda message: vk.open_callback_link(1, 'https://accounts.google.com/auth'))
     assert len(api.calls) == 1
     assert api.calls[0][0] == 'messages.sendMessageEventAnswer'
     assert json.loads(api.calls[0][1]['event_data']) == {'type': 'open_link', 'link': 'https://accounts.google.com/auth'}
