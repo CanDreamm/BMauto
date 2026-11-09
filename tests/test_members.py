@@ -82,7 +82,8 @@ def test_shared_draft_photo_upload_and_publish_by_member(tmp_path, project):
     member_key, _ = bot.draft_for(bot.store.session(3), project)
     assert owner_key == member_key
     chat.send("preview")
-    assert "Сгенерированный текст" in bot.vk.messages[-1][0]
+    assert "Ссылка появится после отправки" in bot.vk.messages[-1][0]
+    assert bot.store.draft(owner_key)["text"] == "Сгенерированный текст"
     chat.send("photos")
     session = bot.store.session(3)
     bot.handle(dict(id=session["last_message"] + 1, from_id=3, peer_id=3, text="",

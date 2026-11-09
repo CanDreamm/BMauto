@@ -17,6 +17,7 @@ URL = "https://drive.google.com/drive/folders/materials"
 class Sheets(StatusSheets):
     """Stateful API double: retain formulas, merge ranges and conditional rules."""
     def __init__(self, header_row=2):
+        self.locale = "en_US"
         self.tables = {0: [["План"]] + [[] for _ in range(header_row - 2)] + [
             ["Неделя", "Дата", "День недели", "Задание", "Другой канал"],
             ["45", "06.11.2026", "Пятница", "Задание", "Чужой текст"],
@@ -31,7 +32,7 @@ class Sheets(StatusSheets):
 
     def request(self, method, path, **kwargs):
         if method == "GET":
-            return {"sheets": deepcopy(list(self.meta.values()))}
+            return {"properties": {"locale": self.locale}, "sheets": deepcopy(list(self.meta.values()))}
         body = kwargs["json"]
         if path.endswith("values:batchGetByDataFilter"):
             return {"valueRanges": [{"dataFilters": [data_filter], "valueRange": {
@@ -229,3 +230,44 @@ def test_member_can_approve_and_removed_member_cannot(tmp_path, project):
     bot.store.remove_member(project["id"], 1, 3, bot.allowed)
     member.send("approve")
     assert bot.google.table[2][0] == SENT
+
+
+def test_approval_writes_green_fill_and_installs_rules_above_existing_formats():
+    google = Sheets()
+    project, chosen = selected(google)
+    original_other_rule = deepcopy(google.meta[0]['conditionalFormats'][0])
+    google.set_status(project, chosen, APPROVED, URL)
+    update = google.writes[-1][-1]['updateCells']
+    cell = update['rows'][0]['values'][0]
+    assert cell['userEnteredValue'] == {'stringValue': APPROVED}
+    assert cell['userEnteredFormat']['backgroundColorStyle']['rgbColor'] == COLORS[APPROVED]
+    assert 'userEnteredFormat.backgroundColorStyle' in update['fields']
+    assert update['range']['startColumnIndex'] == 0 and update['range']['endColumnIndex'] == 1
+    rules = google.meta[0]['conditionalFormats']
+    assert rules[2]['booleanRule']['condition'] == {'type': 'TEXT_EQ', 'values': [{'userEnteredValue': APPROVED}]}
+    assert rules[2]['booleanRule']['format']['backgroundColor'] == COLORS[APPROVED]
+    assert rules[-1] == original_other_rule
+
+
+def test_russian_locale_uses_static_color_rules_and_correct_formula_separator(project):
+    google = Sheets()
+    google.locale = 'ru_RU'
+    google.sync_statuses(project, google.worksheets(project))
+    assert google.tables[0][2][0] == status_formula(3, ';')
+    assert ',' not in google.tables[0][2][0]
+    assert all(rule['booleanRule']['condition']['type'] == 'TEXT_EQ'
+               for rule in google.meta[0]['conditionalFormats'][:4])
+    google.sync_statuses(project, google.worksheets(project))
+    assert len(google.writes) == 1
+
+
+def test_old_or_displaced_color_rules_are_repaired_without_touching_other_channels(project):
+    google = Sheets()
+    old = {'ranges': [{'sheetId': 0, 'startColumnIndex': 0, 'endColumnIndex': 1}],
+           'booleanRule': {'condition': {'type': 'CUSTOM_FORMULA', 'values': [
+               {'userEnteredValue': '=N("BMauto:status:v1")=0'}]}, 'format': {'backgroundColor': COLORS[SENT]}}}
+    google.meta[0]['conditionalFormats'].append(old)
+    google.sync_statuses(project, google.worksheets(project))
+    assert len(google.meta[0]['conditionalFormats']) == 5
+    assert all(rule['booleanRule']['condition']['type'] == 'TEXT_EQ'
+               for rule in google.meta[0]['conditionalFormats'][:4])

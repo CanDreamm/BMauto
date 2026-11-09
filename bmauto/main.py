@@ -271,10 +271,11 @@ class Bot:
             self.render(user, notice="Это действие сейчас недоступно. Выберите кнопку текущего меню")
             return
         if action == "preview":
-            photos = [(self.store.root / photo["path"], photo.get("mime", "image/jpeg")) for photo in draft["photos"]]
-            if photos:
-                self.vk.send(user, "Готовлю предпросмотр черновика…")
-            self.vk.send_draft(user, draft["text"] or "Текст пока не создан", photos, self.task_buttons(session, project))
+            url = f"https://drive.google.com/drive/folders/{draft['folder']}" if draft["published"] and draft["folder"] else task.get("material_url")
+            text = url or "Ссылка появится после отправки материалов в таблицу"
+            if url and draft.get("dirty"):
+                text += "\n\nПоследние изменения черновика ещё не отправлены. Нажмите «Отправить в таблицу», чтобы обновить материалы"
+            self.vk.send(user, text, self.task_buttons(session, project))
             return
         if action == "approve":
             if draft.get("dirty"):

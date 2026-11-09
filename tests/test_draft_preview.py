@@ -9,7 +9,7 @@ from test_projects import actions
 
 
 @pytest.mark.parametrize("with_text", [False, True])
-def test_preview_sends_every_saved_photo_and_actual_text(tmp_path, project, with_text):
+def test_preview_sends_google_link_without_uploading_photos_to_vk(tmp_path, project, with_text):
     bot, chat = selected_bot(tmp_path, project)
     if with_text:
         chat.send("edit_text")
@@ -17,13 +17,25 @@ def test_preview_sends_every_saved_photo_and_actual_text(tmp_path, project, with
     send_photos(bot, 1, 2, 3, 4, 5)
     key, draft = bot.draft_for(bot.store.session(1), project)
     chat.send("preview")
-    user, text, photos = bot.vk.previews[-1]
-    assert user == 1
-    assert text == ("Полный текст публикации\nВторая строка" if with_text else "Текст пока не создан")
-    assert [path for path, _ in photos] == [bot.store.root / photo["path"] for photo in draft["photos"]]
-    assert len(photos) == 5 and all(path.is_file() for path, _ in photos)
-    assert "preview" in actions(bot) and "publish" in actions(bot)
+    assert "Ссылка появится после отправки" in bot.vk.messages[-1][0]
+    chat.send("publish")
+    key, draft = bot.draft_for(bot.store.session(1), project)
+    chat.send("preview")
+    assert bot.vk.messages[-1][0] == f"https://drive.google.com/drive/folders/{draft['folder']}"
+    assert not bot.vk.previews
+    assert "preview" in actions(bot)
     assert bot.store.draft(key) == draft
+
+
+def test_preview_warns_that_google_link_does_not_yet_include_unsent_edits(tmp_path, project):
+    bot, chat = selected_bot(tmp_path, project)
+    send_photos(bot, 1)
+    chat.send("publish")
+    send_photos(bot, 2)
+    chat.send("preview")
+    assert "https://drive.google.com/drive/folders/" in bot.vk.messages[-1][0]
+    assert "изменения черновика ещё не отправлены" in bot.vk.messages[-1][0]
+    assert not bot.vk.previews
 
 
 def test_vk_uploads_all_nine_photos_and_sends_full_long_text_once(tmp_path):
