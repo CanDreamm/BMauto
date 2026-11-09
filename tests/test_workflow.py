@@ -155,8 +155,11 @@ class FakeVK:
         self.messages = []
         self.previews = []
 
-    def send(self, user, text, buttons=None):
+    def send(self, user, text, buttons=None, transient=False):
         self.messages.append((text, buttons))
+
+    def open_callback_link(self, peer, url):
+        self.opened_url = url
 
     def send_draft(self, user, text, photos, buttons):
         self.previews.append((user, text, photos))

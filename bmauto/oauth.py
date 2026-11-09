@@ -143,17 +143,23 @@ class GoogleMenus:
         self.connections, self.store, self.vk, self.admins = connections, store, vk, admins
 
     def handle(self, user, action, session):
-        if action != "google_connect":
+        if action not in {"google_connect", "google_open"}:
             return False
         if not self.store.can_access(session.get("project"), user, self.admins):
             raise ValueError("Подключать Google могут только участники этого проекта")
         if self.connections is None:
             raise ValueError("Google OAuth ещё не настроен на сервере")
+        if action == "google_open":
+            if session.get("view") != "google_connect" or session.get("google_login_expires", 0) <= time.time():
+                raise ValueError("Ссылка входа устарела. Подключите Google заново в настройках")
+            self.vk.open_callback_link(user, session["google_login_url"])
+            return True
         url = self.connections.begin(session["project"], user)
         session.pop("wizard", None)
         session["mode"], session["view"] = None, "google_connect"
+        session["google_login_url"], session["google_login_expires"] = url, time.time() + 600
         self.store.save_session(user, session)
         project = self.store.projects()[session["project"]]
         self.vk.send(user, f"Подключение Google для проекта «{project['name']}». Войдите в свой аккаунт и разрешите доступ к Диску и Таблицам. Этот аккаунт будет использоваться всеми участниками проекта и заменит прежнее подключение. Ссылка действует 10 минут; не пересылайте её. После подключения вернитесь к датам проекта.",
-                     [back_footer({"a": "settings"}, ("Войти в Google", {"open_link": url}))])
+                     [back_footer({"a": "settings"}, ("Войти в Google", {"a": "google_open", "_color": "positive"}))])
         return True

@@ -60,20 +60,22 @@ def back_footer(back, action=None):
 def keyboard(buttons):
     rows = [item if isinstance(item, list) else [item] for item in buttons]
     def action(label, payload):
-        if "open_link" in payload:
-            return {"type": "open_link", "label": label[:40], "link": payload["open_link"]}
-        return {"type": "callback" if payload.get("_callback") else "text", "label": label[:40],
+        return {"type": "callback", "label": label[:40],
                 "payload": json.dumps({k: v for k, v in payload.items() if k not in {"_color", "_callback"}})}
     return {"inline": False, "one_time": False, "buttons": [
-        [({"action": action(label, payload)} if "open_link" in payload else {"action": action(label, payload), "color": button_color(label, payload)})
-         for label, payload in row] for row in rows
+        [{"action": action(label, payload), "color": button_color(label, payload)} for label, payload in row]
+        for row in rows
     ]}
+
 
 
 class VK:
     def __init__(self, token, group_id):
         self.token, self.group_id = token, group_id
         self.http = httpx.Client(timeout=90)
+        self.store = None
+        self._response = None
+        self._callback = None
 
     def call(self, method, **kwargs):
         response = self.http.post(f"https://api.vk.com/method/{method}",
@@ -91,7 +93,23 @@ class VK:
             raise VKAPIError(method, error.get("error_code"), detail[:350])
         return body["response"]
 
-    def send(self, peer, message, buttons=None, attachments=None):
+    def bind_store(self, store):
+        self.store = store
+
+    def begin_response(self, peer):
+        self._response = {"peer": peer, "messages": [], "buttons": None}
+
+    def send(self, peer, message, buttons=None, attachments=None, transient=False):
+        frame = getattr(self, "_response", None)
+        if frame is not None and frame["peer"] == peer and not transient and not attachments:
+            frame["messages"].append(message)
+            if buttons is not None:
+                frame["buttons"] = buttons
+            return []
+        return self._send_messages(peer, message, buttons, attachments)
+
+    def _send_messages(self, peer, message, buttons=None, attachments=None):
+        sent = []
         chunks = [message[i:i+3500] for i in range(0, len(message), 3500)] or ["—"]
         for i, chunk in enumerate(chunks):
             args = {"peer_id": peer, "message": chunk, "random_id": secrets.randbelow(2**31 - 1) + 1}
@@ -99,13 +117,127 @@ class VK:
                 args["attachment"] = ",".join(attachments)
             if buttons is not None and i == len(chunks) - 1:
                 args["keyboard"] = json.dumps(keyboard(buttons), ensure_ascii=False)
+            if getattr(self, "store", None) is not None:
+                args["peer_ids"] = str(args.pop("peer_id"))
             try:
-                self.call("messages.send", **args)
+                result = self.call("messages.send", **args)
             except VKAPIError as exc:
                 if exc.code != 100 or not attachments or i != 0:
                     raise
                 # Keep random_id for a safe retry of the same message.
-                self.call("messages.send", **args, v=LEGACY_PHOTO_VERSION)
+                result = self.call("messages.send", **args, v=LEGACY_PHOTO_VERSION)
+            records = result if isinstance(result, list) else [{"message_id": result}]
+            for record in records:
+                if not isinstance(record, dict) or record.get("error") or record.get("peer_id", peer) != peer:
+                    if isinstance(record, dict) and record.get("error"):
+                        raise ValueError("ВК не отправил сообщение")
+                    continue
+                reference = self.message_reference(record)
+                if reference:
+                    sent.append(reference)
+                    if getattr(self, "store", None) is not None:
+                        self.store.track_chat_message(peer, reference)
+        return sent
+
+    @staticmethod
+    def message_reference(message):
+        cmid = message.get("conversation_message_id")
+        number = message.get("message_id", message.get("id"))
+        if isinstance(cmid, int) and cmid > 0:
+            return {"key": f"c:{cmid}", "cmid": cmid}
+        if isinstance(number, int) and number > 0:
+            return {"key": f"m:{number}", "id": number}
+        return None
+
+    def delete_message(self, peer, message, incoming=False):
+        args = {"peer_id": peer, "cmids": str(message["cmid"])} if message.get("cmid") else {"message_ids": str(message["id"])}
+        def deleted(result):
+            if result is True or result == 1:
+                return True
+            if isinstance(result, dict):
+                return any(deleted(value) for value in result.values())
+            if isinstance(result, list):
+                return any(deleted(value.get("response", 0)) for value in result if isinstance(value, dict))
+            return False
+        try:
+            if deleted(self.call("messages.delete", delete_for_all=1, **args)):
+                return True
+        except (VKAPIError, httpx.HTTPError):
+            pass
+        if incoming:
+            try:
+                # VK may only allow deleting incoming messages on the community side.
+                return deleted(self.call("messages.delete", delete_for_all=0, **args))
+            except (VKAPIError, httpx.HTTPError):
+                pass
+        print("ВК не разрешил удалить одно из новых сообщений.", flush=True)
+        return False
+
+    def end_response(self, peer, incoming=None):
+        frame, self._response = self._response, None
+        if frame is None or not frame["messages"]:
+            return True
+        try:
+            current = self._send_messages(peer, "\n\n".join(frame["messages"]), frame["buttons"])
+        except (ValueError, httpx.HTTPError):
+            print("Не удалось отправить текущий экран ВК. Предыдущие сообщения сохранены.", flush=True)
+            return False
+        if self.store is None or not current:
+            return True
+        keep = {item["key"] for item in current}
+        for previous in self.store.chat_messages(peer):
+            if previous["key"] not in keep and self.delete_message(peer, previous):
+                self.store.forget_chat_message(peer, previous["key"])
+        if incoming is not None:
+            reference = self.message_reference(incoming)
+            if reference:
+                self.delete_message(peer, reference, incoming=True)
+        return True
+
+    def open_callback_link(self, peer, url):
+        callback = getattr(self, "_callback", None)
+        if callback is None:
+            self.send(peer, url)
+            return
+        self.call("messages.sendMessageEventAnswer", event_id=callback["event_id"],
+                  user_id=callback["user_id"], peer_id=peer,
+                  event_data=json.dumps({"type": "open_link", "link": url}))
+        self._callback_answered = True
+
+    def handle_callback(self, callback, handler):
+        self._callback, self._callback_answered = callback, False
+        payload = callback.get("payload", {})
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        def acknowledge():
+            if not self._callback_answered:
+                try:
+                    self.call("messages.sendMessageEventAnswer", event_id=callback["event_id"],
+                              user_id=callback["user_id"], peer_id=callback["peer_id"])
+                    self._callback_answered = True
+                except (VKAPIError, httpx.HTTPError):
+                    print("Не удалось подтвердить нажатие кнопки ВК.", flush=True)
+        try:
+            if payload.get("a") != "google_open":
+                acknowledge()
+            if payload.get("a") != "noop":
+                handler({"id": 0, "from_id": callback["user_id"], "peer_id": callback["peer_id"],
+                         "text": "", "payload": json.dumps(payload), "_callback_event_id": callback["event_id"]})
+        finally:
+            acknowledge()
+            self._callback = None
+
+    def enable_callbacks(self):
+        try:
+            settings = self.call("groups.getLongPollSettings", group_id=self.group_id)
+            events = settings.get("events", {})
+            if not settings.get("is_enabled") or not events.get("message_new") or not events.get("message_event") or settings.get("api_version") != "5.199":
+                options = {key: int(value in (True, 1, "1")) for key, value in events.items()}
+                options.update(message_new=1, message_event=1)
+                self.call("groups.setLongPollSettings", group_id=self.group_id, enabled=1,
+                          api_version="5.199", **options)
+        except VKAPIError:
+            print("Не удалось включить callback-события ВК. Включите message_event в настройках Long Poll сообщества.", flush=True)
 
     def upload_draft_photo(self, peer, path, mime, version=None):
         options = {"v": version} if version else {}
@@ -230,6 +362,7 @@ class VK:
                 if maintenance is not None:
                     maintenance()
                 if server is None:
+                    self.enable_callbacks()
                     server = self.call("groups.getLongPollServer", group_id=self.group_id)
                 response = self.http.get(server["server"], params={"act": "a_check", "key": server["key"], "ts": server["ts"], "wait": 25})
                 response.raise_for_status()
@@ -243,10 +376,8 @@ class VK:
                 for event in body.get("updates", []):
                     if event["type"] == "message_new":
                         handler(event["object"]["message"])
-                    elif event["type"] == "message_event" and event["object"].get("payload", {}).get("a") == "noop":
-                        callback = event["object"]
-                        self.call("messages.sendMessageEventAnswer", event_id=callback["event_id"],
-                                  user_id=callback["user_id"], peer_id=callback["peer_id"])
+                    elif event["type"] == "message_event":
+                        self.handle_callback(event["object"], handler)
                 server["ts"] = body["ts"]
             except (httpx.HTTPError, ValueError, KeyError):
                 # Do not log HTTP exceptions: request URLs may contain Long Poll keys.

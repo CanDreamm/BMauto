@@ -33,6 +33,8 @@ class Bot:
         self.google_menus = GoogleMenus(connections, store, vk, allowed)
         self.zone = ZoneInfo("Europe/Moscow")
         self.store, self.vk, self.google, self.llm, self.allowed = store, vk, google, llm, allowed
+        if hasattr(vk, "bind_store"):
+            vk.bind_store(store)
         self._status_day = None
         self._status_retry_at = 0
 
@@ -199,13 +201,19 @@ class Bot:
             return
         if not self.store.can_enter(user, self.allowed):
             if self.store.session(user):
+                if hasattr(self.vk, "begin_response"):
+                    self.vk.begin_response(user)
                 self.vk.send(user, "У вас нет доступных проектов. Обратитесь к владельцу", [])
+                if hasattr(self.vk, "end_response"):
+                    self.vk.end_response(user)
             return
         session = self.store.session(user)
         has_photos = any(a.get("type") == "photo" for a in message.get("attachments", []))
         if has_photos:
             message = self.vk.full_photo_message(message)
-        if message.get("conversation_message_id"):
+        if message.get("_callback_event_id"):
+            event = "callback:" + str(message["_callback_event_id"])
+        elif message.get("conversation_message_id"):
             event = "conversation:" + str(message["conversation_message_id"])
         elif message.get("id", 0) > 0:
             event = "id:" + str(message["id"])
@@ -218,13 +226,24 @@ class Bot:
             return
         session["last_message"] = max(message.get("id", 0), session.get("last_message", -1))
         self.store.save_session(user, session)
+        if hasattr(self.vk, "begin_response"):
+            self.vk.begin_response(user)
+        processed = False
         try:
             if self.dispatch(user, message, session) is not False:
-                self.store.mark_message_handled(user, event)
+                processed = True
         except ValueError as exc:
             self.render(user, notice=str(exc))
         except Exception:
             self.render(user, notice="Операция не завершена. Черновик сохранён. Проверьте доступы и настройки API, затем повторите действие.")
+        finally:
+            if hasattr(self.vk, "end_response"):
+                incoming = message if processed and not message.get("_callback_event_id") else None
+                delivered = self.vk.end_response(user, incoming=incoming)
+            else:
+                delivered = True
+        if processed and delivered:
+            self.store.mark_message_handled(user, event)
 
     def dispatch(self, user, message, session):
         text = message.get("text", "").strip()
@@ -318,7 +337,7 @@ class Bot:
         if action == "publish":
             session["mode"], session["view"] = None, "task"
             self.store.save_session(user, session)
-            self.vk.send(user, "Сохраняю материалы на Google Диск…")
+            self.vk.send(user, "Сохраняю материалы на Google Диск…", transient=True)
             url = publish(self.google_for(project), self.store, key, project, task)
             session["task"]["material_url"] = url
             session["task"]["status"] = EXPIRED if task["day"] < datetime.now(self.zone).date().isoformat() else SENT
@@ -366,7 +385,7 @@ class Bot:
             if not text and action != "no_supplement":
                 raise ValueError("Напишите дополнение текстом")
             description = task_context(task)
-            self.vk.send(user, "Генерирую текст…")
+            self.vk.send(user, "Генерирую текст…", transient=True)
             draft["text"] = self.llm.generate(project, description, "" if action == "no_supplement" else text)
             draft["dirty"] = True
             self.store.save_draft(key, draft)

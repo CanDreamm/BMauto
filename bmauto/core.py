@@ -115,6 +115,7 @@ class Store:
         self.db = sqlite3.connect(self.root / "state.sqlite3")
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS vk_chat_messages (peer INTEGER NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(peer,key))")
         self.db.execute("CREATE TABLE IF NOT EXISTS handled_messages (user INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(user,event))")
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS project_members (project_id TEXT NOT NULL, user_id INTEGER NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner', 'member')), PRIMARY KEY (project_id, user_id))")
@@ -239,6 +240,17 @@ class Store:
     def save_session(self, user, value):
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO sessions VALUES (?,?)", (user, json.dumps(value)))
+
+    def chat_messages(self, peer):
+        return [json.loads(row[0]) for row in self.db.execute("SELECT body FROM vk_chat_messages WHERE peer=?", (peer,))]
+
+    def track_chat_message(self, peer, message):
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO vk_chat_messages VALUES (?,?,?)", (peer, message["key"], json.dumps(message)))
+
+    def forget_chat_message(self, peer, key):
+        with self.db:
+            self.db.execute("DELETE FROM vk_chat_messages WHERE peer=? AND key=?", (peer, key))
 
     def draft(self, key):
         row = self.db.execute("SELECT body FROM drafts WHERE key=?", (key,)).fetchone()
