@@ -151,13 +151,45 @@ class MonitorService:
                 "sheet_id": None, "month": "", "rows": [], "updated": "", "message": message}
 
 
+def assignment_html(text):
+    """Link plain web URLs without interpreting assignment text as HTML."""
+    parts = []
+    end = 0
+    for match in re.finditer(r"(?<![\w@])(?:https?://|www\.)[^\s<>\"'«»]+", text, re.IGNORECASE):
+        url = match.group()
+        while url:
+            if url[-1] in ".,;:!?…":
+                url = url[:-1]
+            elif url[-1] in ")]}":
+                closer = url[-1]
+                opener = {')': '(', ']': '[', '}': '{'}[closer]
+                if url.count(closer) <= url.count(opener):
+                    break
+                url = url[:-1]
+            else:
+                break
+        parts.append(html.escape(text[end:match.start()]))
+        href = "https://" + url if url.lower().startswith("www.") else url
+        try:
+            valid = bool(urlsplit(href).hostname)
+        except ValueError:
+            valid = False
+        if valid:
+            parts.append(f'<a class="task-link" href="{html.escape(href, quote=True)}" target="_blank" rel="noreferrer noopener">{html.escape(url)}</a>')
+        else:
+            parts.append(html.escape(url))
+        end = match.start() + len(url)
+    parts.append(html.escape(text[end:]))
+    return "".join(parts)
+
+
 def render_monitor(data, path):
     esc = html.escape
     rows = data["rows"]
     body = []
     for row in rows:
         status_label = esc(row["status"] or "Статус не задан", quote=True)
-        assignment = esc(row["assignment"]) if row["assignment"].strip() else '<span class="no-task">Задание не задано</span>'
+        assignment = assignment_html(row["assignment"]) if row["assignment"].strip() else '<span class="no-task">Задание не задано</span>'
         hint = f'<div class="task-hint">{esc(row["hint"])}</div>' if row["hint"] else ""
         link = (f'<a class="materials" href="{esc(row["materials"], quote=True)}" target="_blank" rel="noreferrer noopener">Материалы '
                 '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 12 12 4M4 4h8v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>'

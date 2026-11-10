@@ -38,6 +38,8 @@ td:last-child { border-right: 1px solid var(--row-line, #e1e6ee); border-radius:
 .date { white-space: nowrap; font-variant-numeric: tabular-nums; color: #42556e; font-weight: 600; }
 .weekday { color: #68788f; }
 .task-text { font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; color: #364b65; }
+.task-link { color: #365eaa; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.task-link:hover { color: #244d9b; }
 .task-hint { font-size: 11px; font-weight: 700; color: var(--hint-color, #56657b); margin-top: 8px; }
 .no-task { color: var(--hint-color, #56657b); font-size: 12px; font-weight: 700; }
 .materials { display: inline-flex; align-items: center; gap: 8px; color: #365eaa; background: #ffffffdb; border: 1px solid #bdcde5; border-radius: 7px; font-size: 11px; font-weight: 600; padding: 8px 12px; margin-top: 13px; box-shadow: 0 1px 2px #243c5908; }

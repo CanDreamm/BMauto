@@ -3,6 +3,7 @@ import json
 import sqlite3
 from copy import deepcopy
 from datetime import date, datetime
+from html.parser import HTMLParser
 from types import SimpleNamespace
 
 import pytest
@@ -384,3 +385,40 @@ def test_monitor_cache_does_not_keep_yesterdays_future_rows(monitor, monkeypatch
             return cls(2026, 11, 11, 0, tzinfo=tz)
     monkeypatch.setattr(module, 'datetime', NextDay)
     assert [r['date'] for r in service.load(token, 0)['rows']] == ['2026-11-12']
+
+
+def test_assignment_links_preserve_text_and_escape_markup(monitor):
+    _, token, service, _ = monitor
+    data = service.load(token, 0)
+    text = ('Посмотреть (https://example.com/a_(b)?x=1&y=2).\n'
+            'И www.example.org/path! <img src=x onerror=alert(1)> '
+            'javascript:alert(1) https://[broken')
+    data['rows'][0]['assignment'] = text
+    page = render_monitor(data, '/monitor/' + token)
+    class AssignmentParser(HTMLParser):
+        active = False
+        def __init__(self):
+            super().__init__()
+            self.links, self.text, self.images = [], [], []
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'div' and attrs.get('class') == 'task-text':
+                self.active = True
+            if self.active:
+                if tag == 'a':
+                    self.links.append(attrs)
+                if tag == 'img':
+                    self.images.append(attrs)
+        def handle_endtag(self, tag):
+            if tag == 'div':
+                self.active = False
+        def handle_data(self, value):
+            if self.active:
+                self.text.append(value)
+    parser = AssignmentParser()
+    parser.feed(page)
+    assert ''.join(parser.text).startswith(text)
+    assert [link['href'] for link in parser.links] == [
+        'https://example.com/a_(b)?x=1&y=2', 'https://www.example.org/path']
+    assert all(link['target'] == '_blank' and link['rel'] == 'noreferrer noopener' for link in parser.links)
+    assert not parser.images
