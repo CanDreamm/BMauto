@@ -26,10 +26,9 @@ h1 { font-size: 29px; letter-spacing: -.8px; font-weight: 650; line-height: 1.3;
 .legend-item { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: #66758b; white-space: nowrap; line-height: 18px; }
 .status-square { display: inline-block; width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; background: #fff; border: 1px solid #dce3ec; }
 .status-square.planned { background: #fff3cd; border-color: #e9d99e; }
-.status-square.approved { background: #e9f6ee; border-color: #b9dec7; }
-.status-square.published { background: #d9eee7; border-color: #9ccbbb; }
+.status-square.approved, .status-square.published { background: #edf8ed; border-color: #cbdfca; }
 .status-square.missed { background: #fceceb; border-color: #ebc2be; }
-.status-square.empty { background: #edf0f5; border-color: #cfd6e1; }
+.status-square.empty { background: #f0f0f0; border-color: #d9d9d9; }
 .plan-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 8px; padding: 0 2px; }
 .plan-heading h2 { font-size: 18px; font-weight: 650; letter-spacing: -.3px; margin: 0; }
 .update-status { font-size: 10px; color: #7b889c; line-height: 1.6; }
@@ -42,10 +41,9 @@ td:first-child { border-left: 1px solid var(--row-line, #e1e6ee); border-radius:
 td:nth-child(2) { width: 154px; }
 td:last-child { border-right: 1px solid var(--row-line, #e1e6ee); border-radius: 0 12px 12px 0; }
 .row-planned { --row-bg: #fff7df; --row-line: #eee2b9; }
-.row-approved { --row-bg: #edf8f1; --row-line: #cfe6d8; }
-.row-published { --row-bg: #e2f2eb; --row-line: #bbdcd0; }
+.row-approved, .row-published { --row-bg: #edf8ed; --row-line: #cbdfca; }
 .row-missed { --row-bg: #fdf0ef; --row-line: #efdad7; }
-.row-empty { --row-bg: #eef1f6; --row-line: #dce2eb; }
+.row-empty { --row-bg: #f0f0f0; --row-line: #d9d9d9; }
 .date { white-space: nowrap; font-variant-numeric: tabular-nums; color: #42556e; font-weight: 600; }
 .weekday { color: #68788f; }
 .task-text { font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; color: #364b65; }

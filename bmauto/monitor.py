@@ -153,7 +153,7 @@ def render_monitor(data, path):
     rows = data["rows"]
     body = []
     for row in rows:
-        status_label = esc(row["status"] or "Без статуса", quote=True)
+        status_label = esc(row["status"] or "Статус не задан", quote=True)
         assignment = esc(row["assignment"]) if row["assignment"].strip() else '<span class="no-task">Задание не задано</span>'
         hint = f'<div class="task-hint">{esc(row["hint"])}</div>' if row["hint"] else ""
         link = (f'<a class="materials" href="{esc(row["materials"], quote=True)}" target="_blank" rel="noreferrer noopener">Материалы '
@@ -182,7 +182,7 @@ def render_monitor(data, path):
         refresh["month"] = data["sheet_id"]
     refresh["refresh"] = 1
     legend = "".join(f'<span class="legend-item"><span class="status-square {STATUS_CLASS.get(label, "neutral")}" aria-hidden="true"></span>{esc(label or "Без статуса")}</span>'
-                     for label in ("", PLANNED, APPROVED, PUBLISHED, NOT_PLANNED, NO_PUBLICATION))
+                     for label in (PLANNED, APPROVED, PUBLISHED, NOT_PLANNED, NO_PUBLICATION))
     template = Template((ASSETS / "monitor.html").read_text())
     return template.substitute(title=esc(data["name"]), month=esc(data["month"] or "Мониторинг"),
                                updated=esc(data["updated"] or "Данные не загружены"),
