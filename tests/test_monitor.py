@@ -363,14 +363,14 @@ def test_personal_monitor_root_menu_stays_within_vk_keyboard_limit(tmp_path, pro
         assert 'monitor' in actions(bot)
 
 
-def test_monitor_excludes_past_and_today_but_keeps_all_future_dates():
+def test_monitor_includes_today_and_future_but_excludes_past_dates():
     rows = [['План'], HEADERS,
             ['Дата прошла', '08.11.2026', 'Воскресенье', 'Старое задание'],
             ['Запланировано', '09.11.2026', 'Понедельник', 'Сегодня'],
             ['', '10.11.2026', 'Вторник', 'Будущее задание'],
             ['', '11.11.2026', 'Среда', '']]
     result = monitor_rows(rows, {}, today=date(2026, 11, 9))
-    assert [r['date'] for r in result] == ['2026-11-10', '2026-11-11']
+    assert [r['date'] for r in result] == ['2026-11-09', '2026-11-10', '2026-11-11']
     assert result[-1]['assignment'] == ''
 
 
@@ -381,6 +381,6 @@ def test_monitor_cache_does_not_keep_yesterdays_future_rows(monitor, monkeypatch
     class NextDay(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 11, 10, 0, tzinfo=tz)
+            return cls(2026, 11, 11, 0, tzinfo=tz)
     monkeypatch.setattr(module, 'datetime', NextDay)
     assert [r['date'] for r in service.load(token, 0)['rows']] == ['2026-11-12']

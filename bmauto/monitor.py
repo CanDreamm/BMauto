@@ -56,7 +56,7 @@ def monitor_rows(values, project, today=None):
             day = parse_date(cells[1].strip())
         except ValueError:
             continue
-        if day <= today:
+        if day < today:
             continue
         assignment, link = assignment_cell(cells[3])
         status = cells[0].strip()
