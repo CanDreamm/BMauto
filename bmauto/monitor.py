@@ -154,16 +154,15 @@ def render_monitor(data, path):
     body = []
     for row in rows:
         status_label = esc(row["status"] or "Без статуса", quote=True)
-        status = f'<span class="status-square {row["tone"]}" role="img" aria-label="{status_label}" title="{status_label}"></span>'
         assignment = esc(row["assignment"]) if row["assignment"].strip() else '<span class="no-task">Задание не задано</span>'
         hint = f'<div class="task-hint">{esc(row["hint"])}</div>' if row["hint"] else ""
         link = (f'<a class="materials" href="{esc(row["materials"], quote=True)}" target="_blank" rel="noreferrer noopener">Материалы '
                 '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 12 12 4M4 4h8v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>'
                 if row["materials"] else "")
-        body.append(f'<tr class="row-{row["tone"]}"><td class="status-cell">{status}</td><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time></td>'
+        body.append(f'<tr class="row-{row["tone"]}" aria-label="{status_label}"><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time></td>'
                     f'<td class="weekday">{esc(row["weekday"])}</td><td class="task"><div class="task-text">{assignment}</div>{hint}{link}</td></tr>')
     if not body:
-        body.append(f'<tr><td colspan="4" class="empty-table">{esc(data.get("message") or "В этом месяце пока нет строк с датами")}</td></tr>')
+        body.append(f'<tr><td colspan="3" class="empty-table">{esc(data.get("message") or "В этом месяце пока нет строк с датами")}</td></tr>')
     tabs = []
     for sheet in data["sheets"]:
         active = sheet["sheetId"] == data["sheet_id"]
