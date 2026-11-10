@@ -4,17 +4,6 @@ import time
 import httpx
 
 
-BASE_PROMPT = """Создай публикацию на основе моего сообщения и приложенных материалов.
-
-Учитывай весь контекст проекта: концепцию, тон общения, правила текста, визуальный стиль и персонажей, а также дополнительные референсы.
-
-Представь, какой человек мог бы стоять за этим проектом: его характер, мышление, вкус, чувство юмора и манеру общения. Пиши так, будто именно этот человек решил поделиться моей идеей.
-
-Не пересказывай задание буквально. Сам найди интересную подачу, соблюдай правила проекта и не придумывай неподтверждённых фактов. Текст должен быть живым, естественным, без шаблонов и ощущения, что его написал ИИ.
-
-Выдай только готовую публикацию."""
-
-
 class GenAPI:
     """GenAPI network adapter. Confirm model slug/prices against current catalog."""
 
@@ -27,9 +16,8 @@ class GenAPI:
         if not self.key:
             raise ValueError("Не настроен GENAPI_API_KEY")
         messages = [
-            {"role": "system", "content": (BASE_PROMPT + "\n\nПравила проекта:\n" + project["prompt"]
-                                           + "\n\nКонцепция:\n" + project["concept"])},
-            {"role": "user", "content": "Задание:\n" + task + "\n\nДополнение:\n" + supplement},
+            {"role": "system", "content": project["prompt"] + "\n\n Концепция проекта: " + project["concept"]},
+            {"role": "user", "content": "Задание: " + task + "\n\nДополнение:\n" + supplement},
         ]
         headers = {"Authorization": f"Bearer {self.key}"}
         response = self.http.post(f"/api/v1/networks/{self.model}", headers=headers,

@@ -396,7 +396,7 @@ class Bot:
                 raise ValueError(self.generation_setup_message(project, user))
             if not text and action != "no_supplement":
                 raise ValueError("Напишите дополнение текстом")
-            description = task_context(task)
+            description = assignment_from_task(task)
             self.vk.send(user, "Генерирую текст…", transient=True)
             draft["text"] = self.llm.generate(project, description, "" if action == "no_supplement" else text)
             draft["dirty"] = True

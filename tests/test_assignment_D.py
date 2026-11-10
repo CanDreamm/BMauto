@@ -22,7 +22,7 @@ def test_generation_uses_D_without_other_channel_texts(tmp_path, project):
     chat.send("generate")
     chat.send("no_supplement")
     assert len(captured) == 1
-    assert "Основное задание в D" in captured[0]
+    assert captured[0] == "Основное задание в D"
     assert "НЕ_ИСПОЛЬЗОВАТЬ_ИЗ_E" not in captured[0]
     chat.send("publish")
     assert bot.google.table[2][3].startswith("Основное задание в D\n\nГотовые материалы:\n")
