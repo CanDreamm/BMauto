@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from .core import DEFAULT_COLUMNS, assignment_cell, assignment_from_task, parse_date, table_layout
 
+EXPIRED = "Дата прошла"
 PLANNED = "Запланировано"
 NO_PUBLICATION = "Нет публикации"
 NOT_PLANNED = "Не запланировано"
@@ -16,7 +17,8 @@ COLORS = {NO_PUBLICATION: {"red": .85, "green": .85, "blue": .85},
           APPROVED: {"red": .71, "green": .84, "blue": .66},
           EMPTY: {"red": 1, "green": 1, "blue": 1},
           NOT_PLANNED: {"red": .96, "green": .8, "blue": .8},
-          PUBLISHED: {"red": .71, "green": .84, "blue": .66}}
+          PUBLISHED: {"red": .71, "green": .84, "blue": .66},
+          EXPIRED: {"red": .85, "green": .85, "blue": .85}}
 LEGACY_COLORS = {"Материалы отправлены": COLORS[PLANNED], PLANNED: COLORS[EMPTY], "Дата прошла": COLORS[NO_PUBLICATION]}
 
 
@@ -29,9 +31,7 @@ def status_day(value):
 def publication_status(day, description, current, today):
     assignment, link = assignment_cell(description)
     if day < today:
-        if not assignment.strip():
-            return NO_PUBLICATION
-        return PUBLISHED if link else NOT_PLANNED
+        return EXPIRED
     if current == APPROVED:
         return APPROVED
     return PLANNED if link else EMPTY

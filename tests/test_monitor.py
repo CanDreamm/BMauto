@@ -2,6 +2,7 @@ import io
 import json
 import sqlite3
 from copy import deepcopy
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,16 @@ ROWS = [['План'], HEADERS,
         ['Нет публикации', '03.11.2026', 'Вторник', '', 'Чужой текст'],
         ['Согласовано', '10.11.2026', 'Вторник', append_materials('Согласованное задание', URL), ''],
         ['Вышло', '02.11.2026', 'Понедельник', append_materials('Готовая публикация', URL), '']]
+
+
+@pytest.fixture(autouse=True)
+def monitor_clock(monkeypatch):
+    import bmauto.monitor as module
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 9, 12, tzinfo=tz)
+    monkeypatch.setattr(module, 'datetime', Clock)
 
 
 @pytest.fixture
@@ -62,7 +73,7 @@ def test_month_data_and_cache_are_read_only(monitor):
     assert data['name'] == 'Test' and data['sheet_id'] == 0
     assert [s['title'] for s in data['sheets']] == ['Ноябрь', 'Декабрь']
     assert [r['date'] for r in data['rows']] == sorted(r['date'] for r in data['rows'])
-    assert data['rows'][2]['assignment'] == ''  # Dates without assignments are still visible on the dashboard.
+    assert [r['date'] for r in data['rows']] == ['2026-11-10', '2026-11-12']
     assert data['rows'][-1]['materials'] == URL
     assert all('Чужой текст' not in str(row) for row in data['rows'])
     count = len(calls)
@@ -350,3 +361,26 @@ def test_personal_monitor_root_menu_stays_within_vk_keyboard_limit(tmp_path, pro
         buttons = keyboard(bot.vk.messages[-1][1])['buttons']
         assert len(buttons) <= 10
         assert 'monitor' in actions(bot)
+
+
+def test_monitor_excludes_past_and_today_but_keeps_all_future_dates():
+    rows = [['План'], HEADERS,
+            ['Дата прошла', '08.11.2026', 'Воскресенье', 'Старое задание'],
+            ['Запланировано', '09.11.2026', 'Понедельник', 'Сегодня'],
+            ['', '10.11.2026', 'Вторник', 'Будущее задание'],
+            ['', '11.11.2026', 'Среда', '']]
+    result = monitor_rows(rows, {}, today=date(2026, 11, 9))
+    assert [r['date'] for r in result] == ['2026-11-10', '2026-11-11']
+    assert result[-1]['assignment'] == ''
+
+
+def test_monitor_cache_does_not_keep_yesterdays_future_rows(monitor, monkeypatch):
+    import bmauto.monitor as module
+    _, token, service, calls = monitor
+    assert len(service.load(token, 0)['rows']) == 2
+    class NextDay(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 10, 0, tzinfo=tz)
+    monkeypatch.setattr(module, 'datetime', NextDay)
+    assert [r['date'] for r in service.load(token, 0)['rows']] == ['2026-11-12']

@@ -42,10 +42,11 @@ def month_sheets(sheets):
                   key=lambda s: (order[s["title"].strip().casefold()], s["sheetId"]))
 
 
-def monitor_rows(values, project):
+def monitor_rows(values, project, today=None):
     if not values:
         return []
     header, _ = table_layout(values, project)
+    today = today or datetime.now(ZoneInfo("Europe/Moscow")).date()
     rows = []
     for number, raw in enumerate(values[header:], header + 1):
         cells = [str(value) if value is not None else "" for value in raw] + [""] * 4
@@ -54,6 +55,8 @@ def monitor_rows(values, project):
         try:
             day = parse_date(cells[1].strip())
         except ValueError:
+            continue
+        if day <= today:
             continue
         assignment, link = assignment_cell(cells[3])
         status = cells[0].strip()
@@ -91,7 +94,7 @@ class MonitorService:
             tabs = [{"id": p["id"], "name": p["name"]} for p in projects.values()]
             if project is None:
                 return self.empty_data("Нет доступных проектов", "Пока вам не назначены проекты", tabs)
-            key = (project["id"], project.get("revision"), project.get("google_connection_id"), project.get("spreadsheet_id"), selected)
+            key = (project["id"], project.get("revision"), project.get("google_connection_id"), project.get("spreadsheet_id"), selected, datetime.now(ZoneInfo("Europe/Moscow")).date())
             with self.lock:
                 cached = self.cache.get(key)
             if not force and cached and time.monotonic() - cached[0] < self.ttl:
