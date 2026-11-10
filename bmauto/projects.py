@@ -4,7 +4,7 @@ import uuid
 from urllib.parse import urlsplit
 from .core import DEFAULT_COLUMNS
 from .vk import back_footer
-from .monitor import monitor_url
+from .monitor import monitor_url, project_monitor_url
 
 
 # Settings are edited independently after creating a project by name.
@@ -93,6 +93,7 @@ class ProjectMenus:
             buttons.extend((label, {"a": "project_edit", "field": key})
                            for key, label, _, _ in sorted(FIELDS, key=lambda field: field[0] != "spreadsheet_id"))
             buttons.append(("Участники", {"a": "members"}))
+            buttons.append(("Мониторинг проекта", {"a": "project_monitor", "_color": "primary"}))
             buttons.append(back_footer({"a": "project_home"}, ("Удалить проект", {"a": "project_delete", "_color": "negative"})))
         else:
             details.append("Вы можете подключить свой Google для этого проекта. Остальные настройки меняет владелец проекта")
@@ -108,6 +109,19 @@ class ProjectMenus:
         self.vk.send(user, f"Ваш мониторинг\n\n{monitor_url(self.store, user, self.connections, self.admins)}\n\nПо этой личной ссылке доступны только ваши проекты. Не передавайте её посторонним.", [
             ("Открыть мониторинг", {"a": "monitor_open", "_color": "positive"}),
             back_footer({"a": "projects"}, ("Сменить ссылку", {"a": "monitor_rotate", "_color": "negative"}))])
+
+    def show_project_monitor(self, user, project):
+        self.managed(user, project["id"])
+        url = project_monitor_url(self.store, project["id"], user, self.connections, self.admins)
+        self.view(user, "project_monitor")
+        self.vk.send(user, f"Мониторинг проекта «{project['name']}»\n\n{url}\n\nПо этой секретной ссылке доступен только этот проект, без редактирования. Её можно передать тем, кому нужен просмотр проекта.", [
+            ("Открыть мониторинг", {"a": "project_monitor_open", "_color": "positive"}),
+            back_footer({"a": "settings"}, ("Сменить ссылку", {"a": "project_monitor_rotate", "_color": "negative"}))])
+
+    def show_project_monitor_rotation(self, user, project, confirmation):
+        self.managed(user, project["id"])
+        self.vk.send(user, f"Сменить ссылку мониторинга проекта «{project['name']}»? Прежний адрес перестанет работать для всех, кому его передали. Личные ссылки участников сохранятся.", [back_footer(
+            {"a": "project_monitor"}, ("Да, сменить", {"a": "project_monitor_rotate_confirm", "token": confirmation["token"], "_color": "negative"}))])
 
     def ask(self, user, wizard):
         if wizard["kind"] != "create" and (wizard.get("field") == "name" or wizard.get("field") not in FIELD_MAP):
@@ -144,6 +158,36 @@ class ProjectMenus:
 
     def handle(self, user, action, payload, text, session):
         """Return True when the message belongs to project administration."""
+        if action in {"project_monitor", "project_monitor_open", "project_monitor_rotate", "project_monitor_rotate_confirm"}:
+            project = self.managed(user, session.get("project"))
+            for key in ("wizard", "member_input", "member_remove", "delete_confirmation", "monitor_confirmation"):
+                session.pop(key, None)
+            session["mode"] = None
+            if action == "project_monitor_open":
+                if session.get("view") != "project_monitor":
+                    raise ValueError("Откройте мониторинг проекта в его настройках")
+                self.vk.open_callback_link(user, project_monitor_url(self.store, project["id"], user, self.connections, self.admins))
+            elif action == "project_monitor_rotate":
+                confirmation = {"token": secrets.token_urlsafe(18), "project": project["id"], "user": user}
+                session.update(view="project_monitor_rotate", project_monitor_confirmation=confirmation)
+                self.store.save_session(user, session)
+                self.show_project_monitor_rotation(user, project, confirmation)
+            elif action == "project_monitor_rotate_confirm":
+                confirmation = session.get("project_monitor_confirmation", {})
+                supplied = str(payload.get("token", "")).encode()
+                expected = confirmation.get("token", "-").encode()
+                if (session.get("view") != "project_monitor_rotate" or confirmation.get("project") != project["id"]
+                        or confirmation.get("user") != user or not secrets.compare_digest(supplied, expected)):
+                    raise ValueError("Подтверждение устарело. Запросите смену ссылки заново")
+                self.store.project_monitor_token(project["id"], user, self.admins, rotate=True)
+                session.pop("project_monitor_confirmation", None)
+                self.store.save_session(user, session)
+                self.show_project_monitor(user, project)
+            else:
+                session.pop("project_monitor_confirmation", None)
+                self.store.save_session(user, session)
+                self.show_project_monitor(user, project)
+            return True
         if action in {"monitor", "monitor_open", "monitor_rotate", "monitor_rotate_confirm"}:
             if not self.store.can_enter(user, self.admins):
                 raise ValueError("Нет доступных проектов")

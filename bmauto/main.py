@@ -192,6 +192,10 @@ class Bot:
             self.project_menus.ask(user, session["wizard"])
         elif not project or session.get("view") == "projects":
             self.project_menus.show_projects(user)
+        elif session.get("view") == "project_monitor":
+            self.project_menus.show_project_monitor(user, project)
+        elif session.get("view") == "project_monitor_rotate" and session.get("project_monitor_confirmation"):
+            self.project_menus.show_project_monitor_rotation(user, project, session["project_monitor_confirmation"])
         elif session.get("view") == "settings":
             self.project_menus.show_settings(user, project, session.get("settings_page", 0))
         elif "task" in session and session.get("view") in {"task", "supplement", "photos", "text"}:
@@ -267,6 +271,7 @@ class Bot:
             raise ValueError("Нет доступа к проекту")
         if action in {"projects", "project_page", "project", "project_new", "project_home", "project_cancel", "settings", "project_edit", "dates"}:
             session.pop("monitor_confirmation", None)
+            session.pop("project_monitor_confirmation", None)
             session.pop("delete_confirmation", None)
             session.pop("member_input", None)
             session.pop("member_remove", None)
@@ -292,7 +297,7 @@ class Bot:
         if action in {"project_home", "dates"}:
             self.project_menus.show_home(user, project)
             return
-        if session.get("view") in {"home", "settings", "projects", "create", "edit", "monitor", "monitor_rotate"}:
+        if session.get("view") in {"home", "settings", "projects", "create", "edit", "monitor", "monitor_rotate", "project_monitor", "project_monitor_rotate"}:
             self.render(user, notice="Выберите действие кнопкой текущего меню")
             return
         if session.get("project_revision") != project.get("revision", 1):

@@ -422,3 +422,117 @@ def test_assignment_links_preserve_text_and_escape_markup(monitor):
         'https://example.com/a_(b)?x=1&y=2', 'https://www.example.org/path']
     assert all(link['target'] == '_blank' and link['rel'] == 'noreferrer noopener' for link in parser.links)
     assert not parser.images
+
+
+def test_project_link_is_persistent_separate_and_manageable_only_by_owner_or_admin(monitor, tmp_path):
+    store, personal, service, _ = monitor
+    store.add_member('test', 1, 3, {1})
+    revision = store.projects()['test']['revision']
+    token = store.project_monitor_token('test', 1)
+    assert len(token) == 43 and token != personal
+    assert Store(tmp_path).project_monitor_token('test', 1) == token
+    assert store.project_monitor_token('test', 99, {99}) == token
+    assert store.projects()['test']['revision'] == revision
+    assert store.monitor_user(token) is None
+    for actor in (3, 4):
+        with pytest.raises(ValueError):
+            store.project_monitor_token('test', actor)
+        with pytest.raises(ValueError):
+            store.project_monitor_token('test', actor, rotate=True)
+    assert service.load(token, 0)['name'] == 'Test'
+
+
+def test_project_link_never_lists_or_opens_other_projects_even_from_personal_cache(monitor):
+    store, personal, service, calls = monitor
+    store.save_project({'id': 'other', 'name': 'Private project', 'spreadsheet_id': 'other'}, owner=1)
+    service.load(personal, 0, project_id='other')
+    token = store.project_monitor_token('test', 1)
+    data = service.load(token, 0)
+    assert data['projects'] == [{'id': 'test', 'name': 'Test'}]
+    page = render_monitor(data, '/monitor/' + token)
+    assert 'Private project' not in page and personal not in page
+    count = len(calls)
+    with pytest.raises(MonitorNotFound):
+        service.load(token, 0, project_id='other')
+    assert len(calls) == count
+    assert request(service, '/monitor/' + token + '?project=other&month=0')[0] == 404
+    assert len(service.load(personal, 0)['projects']) == 2
+    assert request(service, '/monitor/' + token, 'POST')[0] == 405
+
+
+def test_rotating_project_link_revokes_cache_without_changing_personal_links(monitor):
+    store, personal, service, _ = monitor
+    old = store.project_monitor_token('test', 1)
+    service.load(old, 0)
+    new = store.project_monitor_token('test', 1, rotate=True)
+    assert old != new
+    with pytest.raises(MonitorNotFound):
+        service.load(old, 0)
+    assert service.load(new, 0)['name'] == 'Test'
+    assert store.monitor_token(1) == personal
+    assert service.load(personal, 0)['name'] == 'Test'
+    store.monitor_token(1, rotate=True)
+    assert service.load(new, 0)['name'] == 'Test'
+
+
+def test_deleting_project_revokes_its_project_link_even_when_cached(monitor):
+    store, _, service, _ = monitor
+    token = store.project_monitor_token('test', 1)
+    service.load(token, 0)
+    store.delete_project('test', 1, (), store.projects()['test']['revision'])
+    assert store.monitor_project(token) is None
+    with pytest.raises(MonitorNotFound):
+        service.load(token, 0)
+
+
+@pytest.mark.parametrize('change', ['rotate', 'delete'])
+def test_project_link_is_rechecked_after_google_load(monitor, change):
+    store, _, service, _ = monitor
+    token = store.project_monitor_token('test', 1)
+    reader = service.google_factory
+    class RevokingReader(reader):
+        def rows(self, source):
+            rows = super().rows(source)
+            if change == 'rotate':
+                store.project_monitor_token('test', 1, rotate=True)
+            else:
+                store.delete_project('test', 1, (), store.projects()['test']['revision'])
+            return rows
+    service.google_factory = RevokingReader
+    with pytest.raises(MonitorNotFound):
+        service.load(token, 0)
+
+
+def test_bot_project_monitor_link_navigation_and_confirmed_rotation(tmp_path, project):
+    bot = bot_at(tmp_path, {'projects': [project]})
+    chat = Conversation(bot)
+    chat.send('project', p=project['id'])
+    chat.send('settings')
+    assert 'project_monitor' in actions(bot)
+    chat.send('project_monitor')
+    old = bot.store.project_monitor_token(project['id'], 1, bot.allowed)
+    assert '/monitor/' + old in bot.vk.messages[-1][0]
+    chat.send('project_monitor_open')
+    assert bot.vk.opened_url == 'https://bot.itiscat.ru/monitor/' + old
+    chat.send('project_monitor_rotate')
+    nonce = bot.store.session(1)['project_monitor_confirmation']['token']
+    assert bot.store.monitor_project(old) is not None  # Asking alone does not rotate.
+    chat.send('project_monitor_rotate_confirm', token=nonce)
+    new = bot.store.project_monitor_token(project['id'], 1, bot.allowed)
+    assert new != old and bot.store.monitor_project(old) is None
+    chat.send('project_monitor_rotate_confirm', token=nonce)
+    assert bot.store.project_monitor_token(project['id'], 1, bot.allowed) == new
+    chat.send('settings')
+    assert bot.store.session(1)['view'] == 'settings'
+
+
+def test_member_cannot_create_or_rotate_shared_project_link(tmp_path, project):
+    bot = bot_at(tmp_path, {'projects': [project]})
+    bot.store.add_member(project['id'], 1, 3, bot.allowed)
+    chat = Conversation(bot, 3)
+    chat.send('project', p=project['id'])
+    chat.send('settings')
+    assert 'project_monitor' not in actions(bot)
+    for action in ('project_monitor', 'project_monitor_open', 'project_monitor_rotate', 'project_monitor_rotate_confirm'):
+        chat.send(action, token='forged')
+    assert not bot.store.db.execute('SELECT * FROM monitor_project_links').fetchall()

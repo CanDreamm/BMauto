@@ -117,6 +117,7 @@ class Store:
         (self.root / "state.sqlite3").chmod(0o600)
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS monitor_project_links (project_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
         self.db.execute("CREATE TABLE IF NOT EXISTS monitor_members (user_id INTEGER PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
         self.db.execute("CREATE TABLE IF NOT EXISTS vk_chat_messages (peer INTEGER NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(peer,key))")
         self.db.execute("CREATE TABLE IF NOT EXISTS handled_messages (user INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(user,event))")
@@ -170,6 +171,20 @@ class Store:
         row = self.db.execute("SELECT user_id FROM monitor_members WHERE token=?", (token,)).fetchone()
         return row[0] if row else None
 
+    def project_monitor_token(self, project_id, actor, admins=(), rotate=False):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            if not self.can_manage(project_id, actor, admins):
+                raise ValueError("Ссылкой проекта управляет владелец или администратор")
+            if rotate:
+                self.db.execute("DELETE FROM monitor_project_links WHERE project_id=?", (project_id,))
+            self.db.execute("INSERT OR IGNORE INTO monitor_project_links VALUES (?,?)", (project_id, secrets.token_urlsafe(32)))
+            return self.db.execute("SELECT token FROM monitor_project_links WHERE project_id=?", (project_id,)).fetchone()[0]
+
+    def monitor_project(self, token):
+        row = self.db.execute("SELECT project_id FROM monitor_project_links WHERE token=?", (token,)).fetchone()
+        return self.projects().get(row[0]) if row else None
+
     def save_project(self, project, expected_revision=None, owner=None):
         with self.db:
             row = self.db.execute("SELECT body FROM projects WHERE id=?", (project["id"],)).fetchone()
@@ -197,6 +212,7 @@ class Store:
             # Keep a tombstone so legacy config cannot recreate the deleted project.
             self.db.execute("UPDATE projects SET body=? WHERE id=?", (json.dumps(archived), project_id))
             self.db.execute("DELETE FROM project_members WHERE project_id=?", (project_id,))
+            self.db.execute("DELETE FROM monitor_project_links WHERE project_id=?", (project_id,))
             for user, body in self.db.execute("SELECT user,body FROM sessions").fetchall():
                 session = json.loads(body)
                 if session.get("project") == project_id:

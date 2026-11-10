@@ -36,6 +36,12 @@ def monitor_url(store, user, connections=None, admins=()):
     return origin + "/monitor/" + store.monitor_token(user, admins)
 
 
+def project_monitor_url(store, project_id, user, connections=None, admins=()):
+    redirect = urlsplit(getattr(connections, "redirect_uri", "https://bot.itiscat.ru/oauth/google/callback"))
+    origin = f"{redirect.scheme}://{redirect.netloc}"
+    return origin + "/monitor/" + store.project_monitor_token(project_id, user, admins)
+
+
 def month_sheets(sheets):
     order = {name.casefold(): i for i, name in enumerate(MONTHS)}
     return sorted((s for s in sheets if s["title"].strip().casefold() in order),
@@ -83,11 +89,16 @@ class MonitorService:
         connection = google = None
         try:
             connection = self.factory()
-            user = connection.store.monitor_user(token)
-            if user is None:
-                raise MonitorNotFound()
             admins = getattr(connection, "admins", ())
-            projects = connection.store.visible_projects(user, admins)
+            def scoped_projects():
+                user = connection.store.monitor_user(token)
+                if user is not None:
+                    return connection.store.visible_projects(user, admins)
+                linked = connection.store.monitor_project(token)
+                if linked is None:
+                    raise MonitorNotFound()
+                return {linked["id"]: linked}
+            projects = scoped_projects()
             if project_id is not None and project_id not in projects:
                 raise MonitorNotFound()
             project = projects.get(project_id) if project_id is not None else next(iter(projects.values()), None)
@@ -124,8 +135,8 @@ class MonitorService:
                 message = str(exc) if isinstance(exc, MonitorUnavailable) else "Не удалось загрузить данные этого проекта. Проверьте подключение Google в боте"
                 data = self.empty_data(project["name"], message, tabs, project["id"])
             # Membership, token rotation and project deletion are checked after Google too.
-            current_projects = connection.store.visible_projects(user, admins)
-            if connection.store.monitor_user(token) != user or project["id"] not in current_projects:
+            current_projects = scoped_projects()
+            if project["id"] not in current_projects:
                 raise MonitorNotFound()
             tabs = [{"id": p["id"], "name": p["name"]} for p in current_projects.values()]
             if not data.get("message"):
