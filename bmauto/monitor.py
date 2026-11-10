@@ -182,7 +182,7 @@ def render_monitor(data, path):
         refresh["month"] = data["sheet_id"]
     refresh["refresh"] = 1
     legend = "".join(f'<span class="legend-item"><span class="status-square {STATUS_CLASS.get(label, "neutral")}" aria-hidden="true"></span>{esc(label or "Без статуса")}</span>'
-                     for label in (PLANNED, APPROVED, PUBLISHED, NOT_PLANNED, NO_PUBLICATION))
+                     for label in (PLANNED, APPROVED, NOT_PLANNED, NO_PUBLICATION))
     template = Template((ASSETS / "monitor.html").read_text())
     return template.substitute(title=esc(data["name"]), month=esc(data["month"] or "Мониторинг"),
                                updated=esc(data["updated"] or "Данные не загружены"),
