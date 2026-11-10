@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from .core import parse_time
+
 BASE = 'https://api.postmypost.io/v4.1'
 
 
@@ -40,7 +42,9 @@ BUDGET = RequestBudget()
 
 
 class PostmypostError(ValueError):
-    pass
+    def __init__(self, message, *, http_status=None):
+        super().__init__(message)
+        self.http_status = http_status
 
 
 class UnknownPublication(PostmypostError):
@@ -86,7 +90,7 @@ class Postmypost:
                 hint = {401: 'Токен недействителен.', 403: 'Проверьте тариф API и права.',
                         404: 'Запись не найдена.', 422: 'Проверьте параметры публикации и требования соцсетей.',
                         429: 'Превышен лимит запросов, повторите позже.'}.get(response.status_code, 'Запрос отклонён.')
-                raise PostmypostError(f'Postmypost: HTTP {response.status_code}. {hint}')
+                raise PostmypostError(f'Postmypost: HTTP {response.status_code}. {hint}', http_status=response.status_code)
             result = response.json()
             if not isinstance(result, (dict, list)):
                 raise ValueError
@@ -164,12 +168,12 @@ class Postmypost:
 
 def publication_at(task, now=None):
     clock = str(task.get('time') or task.get('fields', {}).get('Время') or '').strip()
-    if not re.fullmatch(r'(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?', clock):
-        raise PostmypostError('Укажите в таблице время публикации в формате ЧЧ:ММ и откройте задание заново.')
+    try:
+        parsed = parse_time(clock)
+    except ValueError:
+        raise PostmypostError('Укажите в таблице время публикации в формате ЧЧ:ММ и откройте задание заново.') from None
     zone = ZoneInfo('Europe/Moscow')
-    pieces = clock.split(':')
-    normalized = f'{int(pieces[0]):02}:' + ':'.join(pieces[1:])
-    moment = datetime.fromisoformat(task['day'] + 'T' + normalized).replace(tzinfo=zone)
+    moment = datetime.combine(datetime.fromisoformat(task['day']).date(), parsed, tzinfo=zone)
     if moment <= (now or datetime.now(zone)):
         raise PostmypostError('Дата и время публикации уже прошли. Измените их в таблице и откройте задание заново.')
     return moment.astimezone(timezone.utc).isoformat()
@@ -194,6 +198,22 @@ def confirmed_publication(body, ident, payload):
         return True
     except (KeyError, TypeError, ValueError, AttributeError):
         return False
+
+
+def remote_publication(api, ident):
+    try:
+        body = api.status(ident)
+    except PostmypostError as exc:
+        if exc.http_status == 404:
+            return None
+        raise
+    if not isinstance(body, dict) or type(body.get('id')) is not int or body['id'] != ident:
+        raise PostmypostError('Postmypost не подтвердил состояние записи. Повторите проверку позже.')
+    return body
+
+
+def deleted_publication(body):
+    return body is None or (type(body.get('publication_status')) is int and body['publication_status'] == 0)
 
 
 class PostmypostScheduler:
@@ -232,8 +252,23 @@ class PostmypostScheduler:
         previous = self.store.pmp_job(key)
         for job_key, body in self.store.db.execute("SELECT key,body FROM pmp_jobs WHERE key=? OR key LIKE ?", (key, key + ':pmp:%')):
             job = json.loads(body)
-            if job.get('remote_project') not in groups and (job.get('id') or job.get('state') == 'sending'):
-                raise PostmypostError('Для удалённой из проекта соцсети уже есть очередь Postmypost. Сначала проверьте прежнюю запись в кабинете.')
+            if job.get('remote_project') in groups or job.get('state') == 'cancelled':
+                continue
+            if job.get('id'):
+                protected_validate()
+                api = self.client_factory(credential['token'])
+                try:
+                    remote = remote_publication(api, job['id'])
+                finally:
+                    api.close()
+                if deleted_publication(remote):
+                    protected_validate()
+                    job['state'] = 'cancelled'
+                    self.store.save_pmp_job(job_key, project['id'], job)
+                    continue
+                raise PostmypostError('Для убранной соцсети в Postmypost ещё есть публикация. Удалите её в кабинете и повторите согласование.')
+            if job.get('state') == 'sending':
+                raise UnknownPublication('Для убранной соцсети результат отправки неизвестен. Нужна проверка прежней записи Postmypost.')
         ids = []
         for number, (group, accounts) in enumerate(sorted(groups.items())):
             group_key = key if ((previous and previous.get('remote_project') == group) or (previous is None and number == 0)) else key + ':pmp:' + str(group)
@@ -262,14 +297,16 @@ class PostmypostScheduler:
         api = self.client_factory(config['token'])
         try:
             validate()
-            if before and before.get('id') and before.get('fingerprint') == fingerprint:
-                if confirmed_publication(api.status(before['id']), before['id'], before['payload']):
+            remote_id = before.get('id') if before else None
+            remote = remote_publication(api, remote_id) if remote_id else None
+            was_deleted = bool(remote_id) and deleted_publication(remote)
+            if before and remote_id and not was_deleted and before.get('fingerprint') == fingerprint:
+                if confirmed_publication(remote, remote_id, before['payload']):
                     validate()
                     before['state'] = 'scheduled'
                     self.store.save_pmp_job(key, project['id'], before)
-                    return before['id']
-            remote = api.status(before['id']) if before and before.get('id') else None
-            if remote is not None and remote.get('publication_status') not in {4, 5}:
+                    return remote_id
+            if remote is not None and not was_deleted and remote.get('publication_status') not in {4, 5}:
                 raise PostmypostError('Запись Postmypost уже отправляется, опубликована или имеет ошибку. Проверьте её в кабинете.')
             available = {int(a['id']) for a in api.accounts(config['remote_project']) if a.get('connection_status') == 1}
             if not set(accounts).issubset(available):
@@ -280,7 +317,8 @@ class PostmypostScheduler:
             validate()
             publication_at(task)  # Uploading may have crossed the requested time.
             job = {'remote_project': config['remote_project'], 'fingerprint': fingerprint,
-                   'id': before.get('id') if before else None, 'state': 'sending', 'payload': payload}
+                   'id': None if was_deleted else remote_id, 'state': 'sending', 'payload': payload,
+                   'previous_ids': [*(before.get('previous_ids', []) if before else []), *([remote_id] if was_deleted else [])]}
             self.store.claim_pmp_job(key, project['id'], before, job, config['revision'], config['credential_revision'])
             try:
                 result = api.update(job['id'], payload) if job['id'] else api.create(payload)

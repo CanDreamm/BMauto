@@ -30,6 +30,7 @@ class Bot:
         store.seed_projects(config.get("projects", []))
         store.remove_demo()
         store.ensure_owners(min(allowed) if allowed else None)
+        store.index_legacy_drafts()
         self.scheduler = scheduler or PostmypostScheduler(store, admins=allowed)
         self.postmypost_menus = PostmypostMenus(store, vk, allowed, self.scheduler)
         self.project_menus = ProjectMenus(store, vk, allowed, self.open_project, connections)
@@ -89,20 +90,7 @@ class Bot:
         self.show_dates(user, session)
 
     def draft_for(self, session, project):
-        task = session["task"]
-        identity = {k: v for k, v in task["fields"].items() if k != project.get("link_column", DEFAULT_COLUMNS["link_column"])}
-        parts = [project["id"], task["row"], identity]
-        if "sheet_id" in task:
-            parts.append([task["source_spreadsheet_id"], task["sheet_id"]])
-        if project.get("draft_scope"):
-            parts.append(project["draft_scope"])
-        legacy_key = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
-        # Keep the historical identity key when inserting the time column.
-        parts[2] = {"date": task["day"], "assignment_D": assignment_from_task(task)}
-        key = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
-        if not self.store.has_draft(key) and self.store.has_draft(legacy_key):
-            self.store.save_draft(key, self.store.draft(legacy_key))
-        return key, self.store.draft(key)
+        return self.store.task_draft(project, session['task'])
 
     def task_display(self, task):
         message = task_context(task)

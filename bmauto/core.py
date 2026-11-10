@@ -1,9 +1,10 @@
 import json
+import hashlib
 import re
 import secrets
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, time as clock_time
 from pathlib import Path
 
 DEFAULT_COLUMNS = {"date_column": "Дата", "weekday_column": "День недели", "time_column": "Время", "link_column": "Ссылка"}
@@ -65,6 +66,33 @@ def parse_date(value):
         except ValueError:
             pass
     raise ValueError(f"Неподдерживаемая дата: {value}")
+
+
+def parse_time(value):
+    match = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?", str(value or "").strip())
+    if not match:
+        raise ValueError("Укажите время в формате ЧЧ:ММ")
+    return clock_time(int(match[1]), int(match[2]), int(match[3] or 0))
+
+
+def time_sort_key(value):
+    try:
+        clock = parse_time(value)
+        return clock.hour, clock.minute, clock.second
+    except ValueError:
+        return 24, 0, 0
+
+
+def legacy_draft_keys(project, task):
+    identity = {k: v for k, v in task['fields'].items() if k != project.get('link_column', DEFAULT_COLUMNS['link_column'])}
+    parts = [project['id'], task['row'], identity]
+    if 'sheet_id' in task:
+        parts.append([task['source_spreadsheet_id'], task['sheet_id']])
+    if project.get('draft_scope'):
+        parts.append(project['draft_scope'])
+    legacy = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+    parts[2] = {'date': task['day'], 'assignment_D': assignment_from_task(task)}
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest(), legacy
 
 
 def table_layout(rows, project=None):
@@ -129,7 +157,7 @@ def tasks_from_rows(rows, project, today):
                 continue
             result.append(Task(number, day, fields[project["weekday_column"]], fields, header_row, description, material_url,
                                str(row[0]) if row else "", fields.get(project["time_column"], "").strip()))
-    return sorted(result, key=lambda t: (t.day, t.time, t.row))
+    return sorted(result, key=lambda t: (t.day, time_sort_key(t.time), t.row))
 
 
 class Store:
@@ -140,6 +168,8 @@ class Store:
         (self.root / "state.sqlite3").chmod(0o600)
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS draft_tasks (key TEXT PRIMARY KEY, project TEXT NOT NULL, book TEXT NOT NULL, sheet TEXT NOT NULL, scope TEXT NOT NULL, row INTEGER NOT NULL, day TEXT NOT NULL, assignment TEXT NOT NULL, folder TEXT)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS draft_tasks_scope ON draft_tasks(project,book,scope)")
         self.db.execute("CREATE TABLE IF NOT EXISTS pmp_credentials (user_id INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS pmp_connections (project_id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS pmp_jobs (key TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL)")
@@ -412,6 +442,72 @@ class Store:
         with self.db:
             self.db.execute("DELETE FROM vk_chat_messages WHERE peer=? AND key=?", (peer, key))
 
+    @staticmethod
+    def draft_source(project, task):
+        return (project['id'], task.get('source_spreadsheet_id', project.get('spreadsheet_id', '')),
+                str(task.get('sheet_id', task.get('worksheet', project.get('worksheet', '')))), project.get('draft_scope', ''))
+
+    def remember_draft_task(self, key, project, task):
+        source = self.draft_source(project, task)
+        folder = self.draft(key).get('folder')
+        with self.db:
+            self.db.execute("INSERT INTO draft_tasks VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+                            "sheet=excluded.sheet,row=excluded.row,day=excluded.day,assignment=excluded.assignment,folder=excluded.folder",
+                            (key, *source, task['row'], task['day'], assignment_from_task(task), folder))
+
+    def index_legacy_drafts(self):
+        projects = self.projects()
+        for (body,) in self.db.execute('SELECT body FROM sessions').fetchall():
+            session = json.loads(body)
+            project = projects.get(session.get('project'))
+            if not project:
+                continue
+            tasks = ([session['task']] if session.get('task') else []) + session.get('tasks', [])
+            for task in tasks:
+                if not isinstance(task, dict) or not {'fields', 'row', 'day'}.issubset(task) or not isinstance(task['fields'], dict):
+                    continue
+                if 'sheet_id' in task and 'source_spreadsheet_id' not in task:
+                    continue
+                modern, legacy = legacy_draft_keys(project, task)
+                key = modern if self.has_draft(modern) else legacy
+                if self.has_draft(key) and not self.db.execute('SELECT 1 FROM draft_tasks WHERE key=?', (key,)).fetchone():
+                    self.remember_draft_task(key, project, task)
+
+    def task_draft(self, project, task):
+        modern, legacy = legacy_draft_keys(project, task)
+        project_id, book, sheet, scope = self.draft_source(project, task)
+        url = task.get('material_url')
+        folder = url.rsplit('/', 1)[-1] if url else None
+        known = self.db.execute('SELECT key,sheet,row,day,assignment,folder FROM draft_tasks WHERE project=? AND book=? AND scope=?',
+                                (project_id, book, scope)).fetchall()
+        key = None
+        if folder:
+            matches = [r[0] for r in known if r[5] == folder and self.has_draft(r[0])]
+            if len(matches) > 1:
+                raise ValueError('У материалов несколько черновиков. Нужна проверка привязки задания')
+            if matches:
+                key = matches[0]
+        if key is None:
+            if not self.has_draft(modern) and self.has_draft(legacy):
+                self.save_draft(modern, self.draft(legacy))
+            if self.has_draft(modern):
+                key = modern
+        if key is None:
+            candidates = []
+            for candidate, old_sheet, row, day, assignment, old_folder in known:
+                if old_sheet != sheet or row != task['row'] or not self.has_draft(candidate):
+                    continue
+                draft = self.draft(candidate)
+                if draft.get('published') or (folder and old_folder and folder != old_folder):
+                    continue
+                if day == task['day'] or assignment == assignment_from_task(task):
+                    candidates.append(candidate)
+            if len(candidates) == 1:
+                key = candidates[0]
+        key = key or modern
+        self.remember_draft_task(key, project, task)
+        return key, self.draft(key)
+
     def draft(self, key):
         row = self.db.execute("SELECT body FROM drafts WHERE key=?", (key,)).fetchone()
         return {"text": "", "photos": [], "folder": None, "uploads": {}, "published": False, "dirty": False,
@@ -427,6 +523,7 @@ class Store:
     def save_draft(self, key, value):
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO drafts VALUES (?,?)", (key, json.dumps(value)))
+            self.db.execute("UPDATE draft_tasks SET folder=? WHERE key=?", (value.get('folder'), key))
 
     def has_draft(self, key):
         return self.db.execute("SELECT 1 FROM drafts WHERE key=?", (key,)).fetchone() is not None

@@ -11,7 +11,7 @@ from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from .calendar import MONTHS
-from .core import DEFAULT_COLUMNS, assignment_cell, parse_date, table_layout, assignment_index
+from .core import DEFAULT_COLUMNS, assignment_cell, parse_date, table_layout, assignment_index, time_sort_key
 from .google import Google
 from .statuses import APPROVED, NO_PUBLICATION, NOT_PLANNED, PLANNED, PUBLISHED
 
@@ -80,7 +80,7 @@ def monitor_rows(values, project, today=None):
         rows.append({"row": number, "date": day.isoformat(), "date_label": day.strftime("%d.%m.%Y"),
                      "weekday": cells[weekday_index], "time": cells[time_index].strip() if time_index is not None else "", "assignment": assignment, "materials": link,
                      "status": status, "tone": STATUS_CLASS.get(status, "neutral"), "hint": hint})
-    return sorted(rows, key=lambda item: (item["date"], item["time"], item["row"]))
+    return sorted(rows, key=lambda item: (item["date"], time_sort_key(item["time"]), item["row"]))
 
 
 class MonitorService:
