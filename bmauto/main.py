@@ -93,6 +93,7 @@ class Bot:
         if project.get("draft_scope"):
             parts.append(project["draft_scope"])
         legacy_key = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+        # Keep the historical identity key when inserting the time column.
         parts[2] = {"date": task["day"], "assignment_D": assignment_from_task(task)}
         key = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
         if not self.store.has_draft(key) and self.store.has_draft(legacy_key):
@@ -354,7 +355,7 @@ class Bot:
             session["task"]["material_url"] = url
             session["task"]["status"] = PUBLISHED if task["day"] < datetime.now(self.zone).date().isoformat() else PLANNED
             self.store.save_session(user, session)
-            self.vk.send(user, "Готово. Ссылка записана под описанием в D:\n" + url, self.task_buttons(session, project))
+            self.vk.send(user, "Готово. Ссылка записана под описанием задания:\n" + url, self.task_buttons(session, project))
             return
         if action == "edit_text":
             session["mode"], session["view"] = "text", "text"
@@ -470,6 +471,8 @@ class Bot:
         for i, task in enumerate(tasks):
             if page * DATE_PAGE_SIZE <= i < (page + 1) * DATE_PAGE_SIZE:
                 label = f"{datetime.fromisoformat(task['day']):%d.%m.%Y} — {task['weekday']}"
+                if task.get("time"):
+                    label += " · " + task["time"]
                 if task.get("status") == APPROVED:
                     label = "🟢 " + label
                 elif task.get("material_url"):

@@ -11,7 +11,7 @@ from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from .calendar import MONTHS
-from .core import assignment_cell, parse_date, table_layout
+from .core import DEFAULT_COLUMNS, assignment_cell, parse_date, table_layout, assignment_index
 from .google import Google
 from .statuses import APPROVED, NO_PUBLICATION, NOT_PLANNED, PLANNED, PUBLISHED
 
@@ -51,20 +51,25 @@ def month_sheets(sheets):
 def monitor_rows(values, project, today=None):
     if not values:
         return []
-    header, _ = table_layout(values, project)
+    project = {**DEFAULT_COLUMNS, **project}
+    header, headers = table_layout(values, project)
+    index = assignment_index(headers, project)
+    date_index = headers.index(project["date_column"])
+    weekday_index = headers.index(project["weekday_column"])
+    time_index = headers.index(project["time_column"]) if project["time_column"] in headers else None
     today = today or datetime.now(ZoneInfo("Europe/Moscow")).date()
     rows = []
     for number, raw in enumerate(values[header:], header + 1):
-        cells = [str(value) if value is not None else "" for value in raw] + [""] * 4
-        if not cells[1].strip():
+        cells = [str(value) if value is not None else "" for value in raw] + [""] * len(headers)
+        if not cells[date_index].strip():
             continue
         try:
-            day = parse_date(cells[1].strip())
+            day = parse_date(cells[date_index].strip())
         except ValueError:
             continue
         if day < today:
             continue
-        assignment, link = assignment_cell(cells[3])
+        assignment, link = assignment_cell(cells[index])
         status = cells[0].strip()
         hint = ""
         if assignment.strip():
@@ -73,9 +78,9 @@ def monitor_rows(values, project, today=None):
             elif status == PLANNED:
                 hint = "Ожидает согласования"
         rows.append({"row": number, "date": day.isoformat(), "date_label": day.strftime("%d.%m.%Y"),
-                     "weekday": cells[2], "assignment": assignment, "materials": link,
+                     "weekday": cells[weekday_index], "time": cells[time_index].strip() if time_index is not None else "", "assignment": assignment, "materials": link,
                      "status": status, "tone": STATUS_CLASS.get(status, "neutral"), "hint": hint})
-    return sorted(rows, key=lambda item: (item["date"], item["row"]))
+    return sorted(rows, key=lambda item: (item["date"], item["time"], item["row"]))
 
 
 class MonitorService:
@@ -205,7 +210,8 @@ def render_monitor(data, path):
         link = (f'<a class="materials" href="{esc(row["materials"], quote=True)}" target="_blank" rel="noreferrer noopener">Готовые материалы '
                 '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 12 12 4M4 4h8v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>'
                 if row["materials"] else "")
-        body.append(f'<tr class="row-{row["tone"]}" aria-label="{status_label}"><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time></td>'
+        clock = f'<div class="publication-time">{esc(row.get("time", ""))}</div>' if row.get("time") else ""
+        body.append(f'<tr class="row-{row["tone"]}" aria-label="{status_label}"><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time>{clock}</td>'
                     f'<td class="weekday">{esc(row["weekday"])}</td><td class="task"><div class="task-text">{assignment}</div>{hint}{link}</td></tr>')
     if not body:
         body.append(f'<tr><td colspan="3" class="empty-table">{esc(data.get("message") or "В этом месяце пока нет строк с датами")}</td></tr>')

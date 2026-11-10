@@ -7,7 +7,7 @@ import httpx
 from docx import Document
 from google.auth.transport.requests import Request
 
-from .core import DEFAULT_COLUMNS, append_materials, assignment_cell, assignment_from_task, table_layout
+from .core import DEFAULT_COLUMNS, append_materials, assignment_cell, assignment_from_task, table_layout, assignment_index, schedule_field_names
 from .statuses import APPROVED, PLANNED, StatusSheets
 
 SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
@@ -47,29 +47,30 @@ class Google(StatusSheets):
         project = {**DEFAULT_COLUMNS, **project}
         rows = self.rows(project)
         header_row, current_headers = table_layout(rows, project)
-        if row <= header_row or row > len(rows) or len(current_headers) < 4:
+        index = assignment_index(current_headers, project)
+        if row <= header_row or row > len(rows) or len(current_headers) <= index:
             raise ValueError("Строка задания изменилась. Откройте дату заново")
         values = rows[row - 1]
         fields = dict(zip(current_headers, list(values) + [""] * len(current_headers)))
         expected = project.get("_expected_fields", {})
-        for key in (project["date_column"], project["weekday_column"]):
-            if key in expected and fields.get(key, "") != expected[key]:
+        for key in schedule_field_names(project):
+            if "_expected_fields" in project and fields.get(key, "") != expected.get(key, ""):
                 raise ValueError("Дата задания изменилась во время отправки. Откройте дату заново")
-        original = str(values[3]) if len(values) > 3 else ""
+        original = str(values[index]) if len(values) > index else ""
         description, _ = assignment_cell(original)
         if "_expected_assignment" in project and description != project["_expected_assignment"]:
-            raise ValueError("Задание в D изменилось во время отправки. Откройте дату заново")
+            raise ValueError("Задание в таблице изменилось во время отправки. Откройте дату заново")
         updated = append_materials(original, url)
         if updated == original:
             return
         if "_sheet_id" in project:
             self.request("POST", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}:batchUpdate", json={"requests": [{"updateCells": {
                 "range": {"sheetId": project["_sheet_id"], "startRowIndex": row - 1, "endRowIndex": row,
-                          "startColumnIndex": 3, "endColumnIndex": 4},
+                          "startColumnIndex": index, "endColumnIndex": index + 1},
                 "rows": [{"values": [{"userEnteredValue": {"stringValue": updated}}]}], "fields": "userEnteredValue"}}]})
             return
         sheet = "'" + project["worksheet"].replace("'", "''") + "'"
-        cell = quote(f"{sheet}!D{row}", safe="")
+        cell = quote(f"{sheet}!{chr(65 + index)}{row}", safe="")
         self.request("PUT", f"sheets/v4/spreadsheets/{project['spreadsheet_id']}/values/{cell}",
                      params={"valueInputOption": "RAW"}, json={"values": [[updated]]})
 
@@ -189,16 +190,17 @@ def publish(google, store, key, project, task):
     if not rows:
         raise ValueError("Исходная вкладка задания пуста. Откройте список дат заново")
     header_row, headers = table_layout(rows, project)
+    index = assignment_index(headers, project)
     project["_expected_fields"] = task["fields"]
     project["_expected_assignment"] = assignment_from_task(task)
     row = task["row"]
-    if row <= header_row or row > len(rows) or len(headers) < 4:
+    if row <= header_row or row > len(rows) or len(headers) <= index:
         raise ValueError("Строка задания изменилась. Откройте дату заново")
     current = dict(zip(headers, rows[row - 1] + [""] * len(headers)))
     expected = task["fields"]
-    current_description, existing = assignment_cell(rows[row - 1][3] if len(rows[row - 1]) > 3 else "")
+    current_description, existing = assignment_cell(rows[row - 1][index] if len(rows[row - 1]) > index else "")
     if (current_description != project["_expected_assignment"] or
-        any(current.get(key, "") != expected.get(key, "") for key in (project["date_column"], project["weekday_column"]))):
+        any(current.get(key, "") != expected.get(key, "") for key in schedule_field_names(project))):
         raise ValueError("Задание в таблице изменилось. Откройте список дат заново")
     url = f"https://drive.google.com/drive/folders/{draft['folder']}" if draft["folder"] else None
     if existing and existing != url:

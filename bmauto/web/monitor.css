@@ -36,6 +36,7 @@ td:last-child { border-right: 1px solid var(--row-line, #e1e6ee); border-radius:
 .row-missed { --row-bg: #fdf0ef; --row-line: #efdad7; --hint-color: #a14b43; }
 .row-empty { --row-bg: #f0f0f0; --row-line: #d9d9d9; --hint-color: #626262; }
 .date { white-space: nowrap; font-variant-numeric: tabular-nums; color: #42556e; font-weight: 600; }
+.publication-time { margin-top: 4px; color: #68788f; font-weight: 500; font-size: 12px; }
 .weekday { color: #68788f; }
 .task-text { font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; color: #364b65; }
 .task-link { color: #365eaa; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }

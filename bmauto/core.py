@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-DEFAULT_COLUMNS = {"date_column": "Дата", "weekday_column": "День недели", "link_column": "Ссылка"}
+DEFAULT_COLUMNS = {"date_column": "Дата", "weekday_column": "День недели", "time_column": "Время", "link_column": "Ссылка"}
 HEADER_ROW = 2
 MATERIALS_MARKER = "Готовые материалы:"
 MATERIALS_FOOTER = re.compile(r"(?s)^(?:(.*)\n\n)?Готовые материалы:\n(https://drive\.google\.com/drive/folders/[A-Za-z0-9_-]+)\s*$")
@@ -21,12 +21,16 @@ def assignment_cell(value):
 def assignment_from_task(task):
     if task.get("assignment") is not None:
         return task["assignment"]
+    headers = list(task["fields"])
     values = list(task["fields"].values())
-    return assignment_cell(values[3] if len(values) > 3 else "")[0]
+    index = assignment_index(headers)
+    return assignment_cell(values[index] if len(values) > index else "")[0]
 
 
 def task_context(task):
-    return f"Дата: {task['day']}\nДень недели: {task['weekday']}\nЗадание: {assignment_from_task(task)}"
+    clock = task.get("time", task.get("fields", {}).get("Время", ""))
+    clock_line = f"\nВремя: {clock}" if clock else ""
+    return f"Дата: {task['day']}{clock_line}\nДень недели: {task['weekday']}\nЗадание: {assignment_from_task(task)}"
 
 
 def append_materials(value, url):
@@ -48,9 +52,10 @@ class Task:
     assignment: str | None = None
     material_url: str | None = None
     status: str = ""
+    time: str = ""
 
     def description(self):
-        return task_context({"day": self.day.isoformat(), "weekday": self.weekday, "fields": self.fields, "assignment": self.assignment})
+        return task_context({"day": self.day.isoformat(), "weekday": self.weekday, "fields": self.fields, "assignment": self.assignment, "time": self.time})
 
 
 def parse_date(value):
@@ -79,6 +84,23 @@ def table_layout(rows, project=None):
     raise ValueError("Не найдены заголовки «Дата» и «День недели» во второй или третьей строке")
 
 
+def assignment_index(headers, project=None):
+    project = {**DEFAULT_COLUMNS, **(project or {})}
+    time_column = project["time_column"]
+    if time_column in headers:
+        if headers.index(time_column) != headers.index(project["date_column"]) + 1:
+            raise ValueError("Колонка «Время» должна находиться сразу после даты")
+        index = 4
+    else:
+        index = 3
+    return index
+
+
+def schedule_field_names(project):
+    project = {**DEFAULT_COLUMNS, **project}
+    return tuple(project[key] for key in ("date_column", "time_column", "weekday_column"))
+
+
 def table_headers(rows, project=None):
     return table_layout(rows, project)[1]
 
@@ -88,6 +110,7 @@ def tasks_from_rows(rows, project, today):
     if not rows:
         return []
     header_row, headers = table_layout(rows, project)
+    index = assignment_index(headers, project)
     result = []
     for number, row in enumerate(rows[header_row:], header_row + 1):
         fields = dict(zip(headers, [str(x) for x in row] + [""] * (len(headers) - len(row))))
@@ -98,15 +121,15 @@ def tasks_from_rows(rows, project, today):
             day = parse_date(value)
         except ValueError as exc:
             raise ValueError(f"Строка {number}: {exc}") from exc
-        if day > today:
-            if len(headers) < 4:
-                raise ValueError("Задание должно находиться в столбце D")
-            description, material_url = assignment_cell(row[3] if len(row) > 3 else "")
+        if day > today or (day == today and project["time_column"] in headers):
+            if len(headers) <= index:
+                raise ValueError("Не найдена колонка задания после дня недели")
+            description, material_url = assignment_cell(row[index] if len(row) > index else "")
             if not description.strip():
                 continue
             result.append(Task(number, day, fields[project["weekday_column"]], fields, header_row, description, material_url,
-                               str(row[0]) if row else ""))
-    return sorted(result, key=lambda t: (t.day, t.row))
+                               str(row[0]) if row else "", fields.get(project["time_column"], "").strip()))
+    return sorted(result, key=lambda t: (t.day, t.time, t.row))
 
 
 class Store:

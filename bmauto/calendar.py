@@ -39,4 +39,4 @@ def load_tasks(google, project, today):
     if remaining <= 7 or not current:
         year, month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
         result.extend(read_month(year, month))
-    return sorted(result, key=lambda t: (t["day"], t["row"])), warnings
+    return sorted(result, key=lambda t: (t["day"], t.get("time", ""), t["row"])), warnings

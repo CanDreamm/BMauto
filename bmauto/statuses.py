@@ -2,7 +2,7 @@
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .core import DEFAULT_COLUMNS, assignment_cell, assignment_from_task, parse_date, table_layout
+from .core import DEFAULT_COLUMNS, assignment_cell, assignment_from_task, parse_date, table_layout, assignment_index
 
 EXPIRED = "Дата прошла"
 PLANNED = "Запланировано"
@@ -110,7 +110,8 @@ class StatusSheets:
             if not rows:
                 continue
             try:
-                header, _ = table_layout(rows, project)
+                header, headers = table_layout(rows, project)
+                index = assignment_index(headers, project)
             except ValueError:
                 continue
             # Legacy weekly cells can be vertically merged in A. Unmerge A only.
@@ -127,7 +128,7 @@ class StatusSheets:
                 except ValueError:
                     continue
                 current = str(row[0]) if row else ""
-                status = publication_status(day, row[3] if len(row) > 3 else "", current, today)
+                status = publication_status(day, row[index] if len(row) > index else "", current, today)
                 if current != status:
                     requests.append(cell_update(sid, number, status, COLORS[status]))
             requests.extend(format_updates(sheet, header))
@@ -149,13 +150,14 @@ class StatusSheets:
             source["_sheet_id"] = matches[0]["sheetId"]
         rows = self.rows(source)
         header, headers = table_layout(rows, source)
+        index = assignment_index(headers, source)
         number = task["row"]
         if number <= header or number > len(rows):
             raise ValueError("Строка задания изменилась. Откройте дату заново")
         row = rows[number - 1]
         fields = dict(zip(headers, list(row) + [""] * len(headers)))
-        description, current_url = assignment_cell(row[3] if len(row) > 3 else "")
-        if description != assignment_from_task(task) or any(fields.get(source[key], "") != task["fields"].get(source[key], "") for key in ("date_column", "weekday_column")):
+        description, current_url = assignment_cell(row[index] if len(row) > index else "")
+        if description != assignment_from_task(task) or any(fields.get(source[key], "") != task["fields"].get(source[key], "") for key in ("date_column", "time_column", "weekday_column")):
             raise ValueError("Задание в таблице изменилось. Откройте дату заново")
         if not url or current_url != url:
             raise ValueError("Сначала отправьте материалы в таблицу и проверьте ссылку")
@@ -164,7 +166,7 @@ class StatusSheets:
         sheet = next((s for s in metadata.get("sheets", []) if s["properties"]["sheetId"] == source["_sheet_id"]), None)
         if sheet is None:
             raise ValueError("Вкладка задания не найдена")
-        color_status = publication_status(date.fromisoformat(task["day"]), row[3], status, datetime.now(ZoneInfo("Europe/Moscow")).date())
+        color_status = publication_status(date.fromisoformat(task["day"]), row[index], status, datetime.now(ZoneInfo("Europe/Moscow")).date())
         self.request("POST", f"sheets/v4/spreadsheets/{source['spreadsheet_id']}:batchUpdate", json={
             "requests": format_updates(sheet, header) + [cell_update(source["_sheet_id"], number, color_status, COLORS[color_status])]})
         confirmed = self.rows(source)

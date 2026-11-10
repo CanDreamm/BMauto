@@ -175,7 +175,7 @@ class FakeVK:
 class FakeLLM:
     def generate(self, project, task, supplement):
         assert project["concept"] == "Concept" and project["prompt"] == "Prompt"
-        assert "Задание: Текст" in task and supplement == "Добавьте цену"
+        assert task == "Текст" and supplement == "Добавьте цену"
         return "Сгенерированный текст"
 
 
@@ -207,7 +207,7 @@ def test_vk_full_flow_and_photo_limit(tmp_path, project):
     assert "9/9" in vk.messages[-1][0]
     send("task_home")
     send("publish")
-    assert "Ссылка записана под описанием в D" in vk.messages[-1][0]
+    assert "Ссылка записана под описанием задания" in vk.messages[-1][0]
     assert len(google.created) == 10
     bot.handle(dict(id=counter, from_id=1, peer_id=1))  # Duplicate VK delivery.
     assert len(google.created) == 10
