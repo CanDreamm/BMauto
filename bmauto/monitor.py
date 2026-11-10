@@ -191,7 +191,7 @@ def render_monitor(data, path):
         status_label = esc(row["status"] or "Статус не задан", quote=True)
         assignment = assignment_html(row["assignment"]) if row["assignment"].strip() else '<span class="no-task">Задание не задано</span>'
         hint = f'<div class="task-hint">{esc(row["hint"])}</div>' if row["hint"] else ""
-        link = (f'<a class="materials" href="{esc(row["materials"], quote=True)}" target="_blank" rel="noreferrer noopener">Материалы '
+        link = (f'<a class="materials" href="{esc(row["materials"], quote=True)}" target="_blank" rel="noreferrer noopener">Готовая публикация '
                 '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 12 12 4M4 4h8v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>'
                 if row["materials"] else "")
         body.append(f'<tr class="row-{row["tone"]}" aria-label="{status_label}"><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time></td>'
