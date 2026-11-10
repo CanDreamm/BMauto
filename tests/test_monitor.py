@@ -127,7 +127,7 @@ def test_html_escapes_project_and_assignment_content_and_preserves_lines(monitor
     assert '<img src=external' not in page and '&lt;img src=external onerror=alert(1)&gt;' in page
     assert '<img src=x' not in page and '&lt;img src=x onerror=alert(1)&gt;' in page
     assert '\nВторая строка' in page
-    assert all(label in page for label in ['Статус', 'Дата', 'День', 'Задание', 'Ноябрь', 'Декабрь'])
+    assert all(label in page for label in ['Дата', 'День', 'Задание', 'Ноябрь', 'Декабрь'])
     assert 'Чужой текст' not in page and 'contenteditable' not in page and '<form' not in page
     assert 'rel="noreferrer noopener"' in page
 
