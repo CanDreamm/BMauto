@@ -153,14 +153,14 @@ def render_monitor(data, path):
     rows = data["rows"]
     body = []
     for row in rows:
-        status = (f'<span class="badge {row["tone"]}"><i></i>{esc(row["status"])}</span>' if row["status"]
-                  else '<span class="blank-status" aria-label="Статус не задан">—</span>')
+        status_label = esc(row["status"] or "Без статуса", quote=True)
+        status = f'<span class="status-square {row["tone"]}" role="img" aria-label="{status_label}" title="{status_label}"></span>'
         assignment = esc(row["assignment"]) if row["assignment"].strip() else '<span class="no-task">Задание не задано</span>'
         hint = f'<div class="task-hint">{esc(row["hint"])}</div>' if row["hint"] else ""
         link = (f'<a class="materials" href="{esc(row["materials"], quote=True)}" target="_blank" rel="noreferrer noopener">Материалы '
                 '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 12 12 4M4 4h8v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>'
                 if row["materials"] else "")
-        body.append(f'<tr class="row-{row["tone"]}"><td>{status}</td><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time></td>'
+        body.append(f'<tr class="row-{row["tone"]}"><td class="status-cell">{status}</td><td class="date"><time datetime="{row["date"]}">{row["date_label"]}</time></td>'
                     f'<td class="weekday">{esc(row["weekday"])}</td><td class="task"><div class="task-text">{assignment}</div>{hint}{link}</td></tr>')
     if not body:
         body.append(f'<tr><td colspan="4" class="empty-table">{esc(data.get("message") or "В этом месяце пока нет строк с датами")}</td></tr>')
@@ -182,10 +182,12 @@ def render_monitor(data, path):
     if data["sheet_id"] is not None:
         refresh["month"] = data["sheet_id"]
     refresh["refresh"] = 1
+    legend = "".join(f'<span class="legend-item"><span class="status-square {STATUS_CLASS.get(label, "neutral")}" aria-hidden="true"></span>{esc(label or "Без статуса")}</span>'
+                     for label in ("", PLANNED, APPROVED, PUBLISHED, NOT_PLANNED, NO_PUBLICATION))
     template = Template((ASSETS / "monitor.html").read_text())
     return template.substitute(title=esc(data["name"]), month=esc(data["month"] or "Мониторинг"),
                                updated=esc(data["updated"] or "Данные не загружены"),
-                               assets=ASSET_VERSION, projects="".join(project_tabs) or '<span class="no-projects">Проектов пока нет</span>',
+                               assets=ASSET_VERSION, legend=legend, projects="".join(project_tabs) or '<span class="no-projects">Проектов пока нет</span>',
                                rows="".join(body), tabs="".join(tabs), refresh=esc(path + "?" + urlencode(refresh), quote=True))
 
 
