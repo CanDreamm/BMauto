@@ -66,7 +66,9 @@ class FakeGoogle:
     def set_link(self, project, row, headers, url):
         if self.fail_link:
             raise RuntimeError("temporary Sheets failure")
-        self.table[row - 1][3] = append_materials(self.table[row - 1][3], url)
+        from bmauto.core import assignment_index
+        index = assignment_index(headers, project)
+        self.table[row - 1][index] = append_materials(self.table[row - 1][index], url)
 
 
 def task(google, project):

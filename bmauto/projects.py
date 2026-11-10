@@ -93,6 +93,7 @@ class ProjectMenus:
             buttons.extend((label, {"a": "project_edit", "field": key})
                            for key, label, _, _ in sorted(FIELDS, key=lambda field: field[0] != "spreadsheet_id"))
             buttons.append(("Участники", {"a": "members"}))
+            buttons.append(("Соцсети · Postmypost", {"a": "pmp", "_color": "primary"}))
             buttons.append(("Мониторинг проекта", {"a": "project_monitor", "_color": "primary"}))
             buttons.append(back_footer({"a": "project_home"}, ("Удалить проект", {"a": "project_delete", "_color": "negative"})))
         else:

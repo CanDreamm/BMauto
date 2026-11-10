@@ -140,6 +140,8 @@ class Store:
         (self.root / "state.sqlite3").chmod(0o600)
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS pmp_connections (project_id TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS pmp_jobs (key TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS monitor_project_links (project_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
         self.db.execute("CREATE TABLE IF NOT EXISTS monitor_members (user_id INTEGER PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
         self.db.execute("CREATE TABLE IF NOT EXISTS vk_chat_messages (peer INTEGER NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(peer,key))")
@@ -181,6 +183,40 @@ class Store:
         return {key: project for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")
                 if not (project := json.loads(body)).get("deleted_at")}
 
+    def pmp_connection(self, project_id):
+        row = self.db.execute("SELECT body FROM pmp_connections WHERE project_id=?", (project_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_pmp_connection(self, project_id, actor, admins, changes, expected_revision):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            if not self.can_manage(project_id, actor, admins):
+                raise ValueError("Подключение Postmypost меняет владелец или администратор")
+            current = self.pmp_connection(project_id) or {"revision": 0}
+            if current["revision"] != expected_revision:
+                raise ValueError("Подключение Postmypost изменилось. Откройте настройки заново")
+            updated = {**current, **changes, "revision": current["revision"] + 1}
+            self.db.execute("INSERT OR REPLACE INTO pmp_connections VALUES (?,?)", (project_id, json.dumps(updated)))
+        return updated
+
+    def pmp_job(self, key):
+        row = self.db.execute("SELECT body FROM pmp_jobs WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def claim_pmp_job(self, key, project_id, before, job, revision):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            config = self.pmp_connection(project_id)
+            if project_id not in self.projects() or not config or config["revision"] != revision:
+                raise ValueError("Настройки Postmypost изменились. Откройте задание заново")
+            if self.pmp_job(key) != before:
+                raise ValueError("Публикация уже обрабатывается. Откройте задание и проверьте результат")
+            self.db.execute("INSERT OR REPLACE INTO pmp_jobs VALUES (?,?,?)", (key, project_id, json.dumps(job)))
+
+    def save_pmp_job(self, key, project_id, job):
+        with self.db:
+            self.db.execute("UPDATE pmp_jobs SET body=? WHERE key=? AND project_id=?", (json.dumps(job), key, project_id))
+
     def monitor_token(self, user, admins=(), rotate=False):
         if not isinstance(user, int) or user <= 0 or not self.can_enter(user, admins):
             raise ValueError("Нет доступных проектов")
@@ -201,6 +237,7 @@ class Store:
                 raise ValueError("Ссылкой проекта управляет владелец или администратор")
             if rotate:
                 self.db.execute("DELETE FROM monitor_project_links WHERE project_id=?", (project_id,))
+            self.db.execute("DELETE FROM pmp_connections WHERE project_id=?", (project_id,))
             self.db.execute("INSERT OR IGNORE INTO monitor_project_links VALUES (?,?)", (project_id, secrets.token_urlsafe(32)))
             return self.db.execute("SELECT token FROM monitor_project_links WHERE project_id=?", (project_id,)).fetchone()[0]
 
@@ -236,6 +273,7 @@ class Store:
             self.db.execute("UPDATE projects SET body=? WHERE id=?", (json.dumps(archived), project_id))
             self.db.execute("DELETE FROM project_members WHERE project_id=?", (project_id,))
             self.db.execute("DELETE FROM monitor_project_links WHERE project_id=?", (project_id,))
+            self.db.execute("DELETE FROM pmp_connections WHERE project_id=?", (project_id,))
             for user, body in self.db.execute("SELECT user,body FROM sessions").fetchall():
                 session = json.loads(body)
                 if session.get("project") == project_id:

@@ -17,17 +17,21 @@ from .oauth import GoogleMenus, ProjectGoogle
 from .oauth_server import connections_from_env
 from .projects import ProjectMenus
 from .vk import VK, back_footer, photo_format, photo_identity, photo_size
-from .statuses import APPROVED, COLORS, PLANNED, PUBLISHED
+from .statuses import APPROVED, COLORS, PLANNED, PUBLISHED, StatusSheets
+from .postmypost import PostmypostScheduler
+from .postmypost_menus import PostmypostMenus, SCREENS as PMP_SCREENS
 
 DATE_PAGE_SIZE = 8
 DATE_COLUMN_SIZE = 4
 
 
 class Bot:
-    def __init__(self, config, store, vk, google, llm, allowed, connections=None):
+    def __init__(self, config, store, vk, google, llm, allowed, connections=None, scheduler=None):
         store.seed_projects(config.get("projects", []))
         store.remove_demo()
         store.ensure_owners(min(allowed) if allowed else None)
+        self.scheduler = scheduler or PostmypostScheduler(store)
+        self.postmypost_menus = PostmypostMenus(store, vk, allowed, self.scheduler)
         self.project_menus = ProjectMenus(store, vk, allowed, self.open_project, connections)
         self.member_menus = MemberMenus(store, vk, allowed)
         self.google_menus = GoogleMenus(connections, store, vk, allowed)
@@ -137,7 +141,8 @@ class Bot:
         buttons.append([("Редактировать текст" if draft["text"] else "Написать текст", {"a": "edit_text"}),
                         ("Сгенерировать заново" if draft["text"] else "Сгенерировать текст", {"a": "generate"})])
         buttons.append((f"Фотографии · {len(draft['photos'])}/9", {"a": "photos"}))
-        if not send_button and session["task"].get("material_url") and not draft.get("dirty") and not draft.get("approved") and session["task"].get("status") != APPROVED:
+        schedule_current = draft.get("postmypost_id") and draft.get("approved_schedule") == self.scheduler.signature(project, session["task"])
+        if not send_button and session["task"].get("material_url") and not draft.get("dirty") and (not schedule_current or session["task"].get("status") != APPROVED):
             send_button = ("Согласовано", {"a": "approve", "_color": "positive"})
         return buttons + [back_footer({"a": "project_home"}, send_button)]
 
@@ -189,7 +194,12 @@ class Bot:
             self.store.save_session(user, session)
             self.project_menus.show_home(user, project)
             return
-        if "wizard" in session:
+        if project and session.get("view") in PMP_SCREENS:
+            if self.store.can_manage(project["id"], user, self.allowed):
+                self.postmypost_menus.render(user, session)
+            else:
+                self.project_menus.show_settings(user, project)
+        elif "wizard" in session:
             self.project_menus.ask(user, session["wizard"])
         elif not project or session.get("view") == "projects":
             self.project_menus.show_projects(user)
@@ -276,6 +286,8 @@ class Bot:
             session.pop("delete_confirmation", None)
             session.pop("member_input", None)
             session.pop("member_remove", None)
+        if self.postmypost_menus.handle(user, action, payload, text, session):
+            return
         if self.member_menus.handle(user, action, payload, text, session):
             return
         if self.google_menus.handle(user, action, session):
@@ -298,7 +310,7 @@ class Bot:
         if action in {"project_home", "dates"}:
             self.project_menus.show_home(user, project)
             return
-        if session.get("view") in {"home", "settings", "projects", "create", "edit", "monitor", "monitor_rotate", "project_monitor", "project_monitor_rotate"}:
+        if session.get("view") in PMP_SCREENS or session.get("view") in {"home", "settings", "projects", "create", "edit", "monitor", "monitor_rotate", "project_monitor", "project_monitor_rotate"}:
             self.render(user, notice="Выберите действие кнопкой текущего меню")
             return
         if session.get("project_revision") != project.get("revision", 1):
@@ -314,6 +326,7 @@ class Bot:
             task = session["tasks"][int(payload["i"])]
             session["task"], session["mode"] = task, None
             session["view"] = "task"
+            session["pmp_revision"] = (self.store.pmp_connection(project["id"]) or {}).get("revision", 0)
             self.store.save_session(user, session)
             self.vk.send(user, self.task_display(task), self.task_buttons(session, project))
             return
@@ -340,12 +353,31 @@ class Bot:
         if action == "approve":
             if draft.get("dirty"):
                 raise ValueError("Сначала сохраните изменения в таблицу")
-            status = self.google_for(project).set_status(project, task, APPROVED, task.get("material_url")) or APPROVED
+            google = self.google_for(project)
+            revision = (self.store.pmp_connection(project["id"]) or {}).get("revision", 0)
+            def validate():
+                current = self.store.projects().get(project["id"])
+                config = self.store.pmp_connection(project["id"]) or {}
+                if not current or not self.store.can_access(project["id"], user, self.allowed):
+                    raise ValueError("Нет доступа к проекту")
+                if current.get("revision", 1) != project.get("revision", 1) or config.get("revision", 0) != revision or session.get("pmp_revision") != revision:
+                    raise ValueError("Настройки проекта или соцсети изменились. Откройте задание заново")
+                saved = self.store.draft(key)
+                if saved.get("dirty") or saved["text"] != draft["text"] or saved["photos"] != draft["photos"]:
+                    raise ValueError("Черновик изменился во время отправки. Откройте задание заново")
+                StatusSheets.validate_task(google, project, task, task.get("material_url"))
+            validate()
+            self.vk.send(user, "Создаю отложенную публикацию в Postmypost…", transient=True)
+            remote_id = self.scheduler.schedule(project, task, key, draft, validate)
+            validate()
+            status = google.set_status(project, task, APPROVED, task.get("material_url")) or APPROVED
+            draft["postmypost_id"] = remote_id
+            draft["approved_schedule"] = [task["day"], task.get("time", ""), revision]
             draft["approved"] = True
             self.store.save_draft(key, draft)
             session["task"]["status"] = status
             self.store.save_session(user, session)
-            self.vk.send(user, f"{status}. Статус в колонке A отмечен зелёным.", self.task_buttons(session, project))
+            self.vk.send(user, f"{status}. Отложенная публикация Postmypost №{remote_id} создана на {task['day']} {task.get('time', '')} (МСК).", self.task_buttons(session, project))
             return
         if action == "publish":
             session["mode"], session["view"] = None, "task"

@@ -10,6 +10,7 @@ from bmauto.vk import keyboard
 from test_draft_editing import selected_bot
 from test_projects import Conversation, actions
 from test_workflow import FakeGoogle, task
+from postmypost_fakes import connect_postmypost
 
 URL = "https://drive.google.com/drive/folders/materials"
 
@@ -112,7 +113,7 @@ def test_settings_footer_pairs_back_and_delete(tmp_path, project):
     chat.send("settings")
     rows = keyboard(bot.vk.messages[-1][1])["buttons"]
     assert [row[0]["action"]["label"] for row in rows] == [
-        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Мониторинг проекта", "Назад"]
+        "Подключить Google", "Google Таблица", "Концепция", "Промпт", "Участники", "Соцсети · Postmypost", "Мониторинг проекта", "Назад"]
     assert rows[-1][0]["color"] == "primary" and rows[-1][1]["color"] == "negative"
     assert rows[-1][1]["action"]["label"] == "Удалить проект"
 
@@ -173,6 +174,7 @@ def test_stale_approval_never_marks_another_task(change):
 
 def test_menu_order_and_publication_approval_edit_cycle(tmp_path, project):
     bot, chat = selected_bot(tmp_path, project)
+    connect_postmypost(bot, project)
     assert "approve" not in actions(bot)
     chat.send("edit_text")
     chat.send(text="Текст публикации")
@@ -218,6 +220,7 @@ def test_failed_status_update_keeps_publication_retryable_without_duplicate_uplo
 
 def test_member_can_approve_and_removed_member_cannot(tmp_path, project):
     bot, owner = selected_bot(tmp_path, project)
+    connect_postmypost(bot, project)
     owner.send("edit_text")
     owner.send(text="Текст")
     owner.send("publish")

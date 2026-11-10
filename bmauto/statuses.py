@@ -135,9 +135,7 @@ class StatusSheets:
         if requests:
             self.request("POST", f"sheets/v4/spreadsheets/{book}:batchUpdate", json={"requests": requests})
 
-    def set_status(self, project, task, status, url):
-        if status not in {PLANNED, APPROVED}:
-            raise ValueError("Неизвестный статус")
+    def validate_task(self, project, task, url):
         if task.get("source_spreadsheet_id", project["spreadsheet_id"]) != project["spreadsheet_id"]:
             raise ValueError("Таблица проекта изменилась. Откройте дату заново")
         source = {**DEFAULT_COLUMNS, **project, "worksheet": task.get("worksheet", project.get("worksheet", "Авто"))}
@@ -161,6 +159,13 @@ class StatusSheets:
             raise ValueError("Задание в таблице изменилось. Откройте дату заново")
         if not url or current_url != url:
             raise ValueError("Сначала отправьте материалы в таблицу и проверьте ссылку")
+        return source, header, row, index
+
+    def set_status(self, project, task, status, url):
+        if status not in {PLANNED, APPROVED}:
+            raise ValueError("Неизвестный статус")
+        source, header, row, index = self.validate_task(project, task, url)
+        number = task["row"]
         metadata = self.request("GET", f"sheets/v4/spreadsheets/{source['spreadsheet_id']}", params={
             "fields": "sheets(properties(sheetId),conditionalFormats)"})
         sheet = next((s for s in metadata.get("sheets", []) if s["properties"]["sheetId"] == source["_sheet_id"]), None)
