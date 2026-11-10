@@ -10,10 +10,13 @@ def setup(tmp_path, project):
     bot = bot_at(tmp_path, {'projects': [project]})
     api = FakePostmypost()
     bot.scheduler.client_factory = api.factory
-    chat = Conversation(bot)
-    chat.send('project', p=project['id'])
-    chat.send('settings')
-    return bot, api, chat
+    return bot, api, Conversation(bot)
+
+
+def connect_personal(chat):
+    chat.send('pmp_personal')
+    chat.send('pmp_token')
+    chat.send(text='test-token')
 
 
 def choose(bot, chat, action, index=0):
@@ -21,65 +24,86 @@ def choose(bot, chat, action, index=0):
     chat.send(action, i=index, n=nonce)
 
 
-def test_token_and_multiple_social_networks_are_configured_in_bot_and_persist(tmp_path, project):
+def test_personal_token_is_saved_once_and_project_opens_social_networks_directly(tmp_path, project):
     bot, api, chat = setup(tmp_path, project)
-    assert 'pmp' in actions(bot)
-    chat.send('pmp')
-    chat.send('pmp_token')
-    chat.send(text='test-token')
+    connect_personal(chat)
+    assert bot.store.pmp_credential(1)['token'] == 'test-token'
     assert all('test-token' not in text for text, _ in bot.vk.messages)
     assert 'test-token' not in str(bot.store.session(1))
-    chat.send('pmp_projects')
-    choose(bot, chat, 'pmp_project')
+    chat.send('project', p=project['id'])
+    chat.send('settings')
+    chat.send('pmp')
+    assert bot.store.session(1)['view'] == 'pmp_accounts'
+    assert 'pmp_token' not in actions(bot) and 'pmp_project' not in actions(bot)
     choose(bot, chat, 'pmp_toggle', 0)
     choose(bot, chat, 'pmp_toggle', 1)
     choose(bot, chat, 'pmp_save')
     config = bot.store.pmp_connection(project['id'])
-    assert config['remote_project'] == 10
+    assert 'token' not in config and config['credential_owner'] == 1
     assert [item['id'] for item in config['accounts']] == [20, 21]
+    assert all(item['remote_project'] == 10 for item in config['accounts'])
     assert Store(tmp_path).pmp_connection(project['id']) == config
     assert 'Сообщество ВК' in bot.vk.messages[-1][0] and 'Канал Telegram' in bot.vk.messages[-1][0]
     chat.send('settings')
     assert bot.store.session(1)['view'] == 'settings'
 
 
-def test_stale_selection_cannot_override_changed_postmypost_token(tmp_path, project):
+def test_same_personal_connection_is_used_for_another_project_without_reentry(tmp_path, project):
+    bot, api, chat = setup(tmp_path, project)
+    connect_personal(chat)
+    bot.store.save_project({'id': 'other', 'name': 'Другой'}, owner=1)
+    for ident in (project['id'], 'other'):
+        chat.send('project', p=ident)
+        chat.send('pmp')
+        choose(bot, chat, 'pmp_toggle', 0)
+        choose(bot, chat, 'pmp_save')
+        assert bot.store.pmp_connection(ident)['credential_owner'] == 1
+        assert 'token' not in bot.store.pmp_connection(ident)
+    assert bot.store.db.execute('SELECT COUNT(*) FROM pmp_credentials').fetchone()[0] == 1
+
+
+def test_stale_selection_cannot_override_a_replaced_personal_token(tmp_path, project):
     bot, _, chat = setup(tmp_path, project)
-    chat.send('pmp_token')
-    chat.send(text='test-token')
-    chat.send('pmp_projects')
+    connect_personal(chat)
+    chat.send('project', p=project['id'])
+    chat.send('pmp')
     nonce = bot.store.session(1)['pmp_choices']['nonce']
-    before = bot.store.pmp_connection(project['id'])
-    bot.store.save_pmp_connection(project['id'], 1, bot.allowed, {'token': 'replacement'}, before['revision'])
-    chat.send('pmp_project', i=0, n=nonce)
-    assert bot.store.pmp_connection(project['id'])['token'] == 'replacement'
-    assert bot.store.pmp_connection(project['id']).get('remote_project') is None
+    bot.store.save_pmp_credential(1, 'replacement', bot.allowed, 1)
+    chat.send('pmp_toggle', i=0, n=nonce)
+    assert bot.store.pmp_credential(1)['token'] == 'replacement'
+    assert bot.store.pmp_connection(project['id']) is None
 
 
-def test_non_manager_cannot_read_replace_or_attach_project_token(tmp_path, project):
+def test_non_manager_has_own_personal_token_but_cannot_change_project_accounts(tmp_path, project):
     bot, api, owner = setup(tmp_path, project)
-    owner.send('pmp_token')
-    owner.send(text='test-token')
-    bot.store.add_member(project['id'], 1, 3, bot.allowed)
+    connect_personal(owner)
+    owner.send('project', p=project['id'])
+    owner.send('pmp')
+    choose(bot, owner, 'pmp_toggle')
+    choose(bot, owner, 'pmp_save')
     before = deepcopy(bot.store.pmp_connection(project['id']))
+    bot.store.add_member(project['id'], 1, 3, bot.allowed)
     member = Conversation(bot, 3)
+    connect_personal(member)
+    assert bot.store.pmp_credential(1)['revision'] == 1
+    assert bot.store.pmp_credential(3)['revision'] == 1
     member.send('project', p=project['id'])
     member.send('settings')
     assert 'pmp' not in actions(bot)
-    for action in ('pmp', 'pmp_token', 'pmp_projects', 'pmp_project', 'pmp_toggle', 'pmp_save'):
+    for action in ('pmp', 'pmp_accounts', 'pmp_toggle', 'pmp_save'):
         member.send(action, i=0, n='forged')
     assert bot.store.pmp_connection(project['id']) == before
     assert all('test-token' not in text for text, _ in bot.vk.messages)
 
 
-def test_project_choice_pagination_stays_within_vk_keyboard_limit(tmp_path, project):
+def test_social_account_pagination_stays_within_vk_keyboard_limit(tmp_path, project):
     bot, api, chat = setup(tmp_path, project)
-    api.projects_data = [{'id': i + 1, 'name': f'Проект {i + 1}'} for i in range(30)]
-    chat.send('pmp_token')
-    chat.send(text='test-token')
-    chat.send('pmp_projects')
+    api.projects_data = [{'id': i + 1, 'name': f'Проект {i + 1}'} for i in range(15)]
+    connect_personal(chat)
+    chat.send('project', p=project['id'])
+    chat.send('pmp')
     for page in range(5):
         chat.send('pmp_page', page=page)
         assert len(keyboard(bot.vk.messages[-1][1])['buttons']) <= 10
-    chat.send('pmp')
+    chat.send('pmp_home')
     assert bot.store.session(1)['view'] == 'pmp'

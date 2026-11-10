@@ -30,7 +30,7 @@ class Bot:
         store.seed_projects(config.get("projects", []))
         store.remove_demo()
         store.ensure_owners(min(allowed) if allowed else None)
-        self.scheduler = scheduler or PostmypostScheduler(store)
+        self.scheduler = scheduler or PostmypostScheduler(store, admins=allowed)
         self.postmypost_menus = PostmypostMenus(store, vk, allowed, self.scheduler)
         self.project_menus = ProjectMenus(store, vk, allowed, self.open_project, connections)
         self.member_menus = MemberMenus(store, vk, allowed)
@@ -150,6 +150,12 @@ class Bot:
         session = self.store.session(user) if session is None else session
         if notice:
             self.vk.send(user, notice)
+        if session.get("view") in {"pmp_personal", "pmp_token"}:
+            if not self.store.can_enter(user, self.allowed):
+                self.vk.send(user, "У вас нет доступных проектов. Обратитесь к владельцу", [])
+                return
+            self.postmypost_menus.render(user, session)
+            return
         if session.get("view") == "monitor":
             self.project_menus.show_monitor(user)
             return
@@ -276,7 +282,7 @@ class Bot:
             action = "projects"
         elif text.lower() in ("меню", "/menu", "меню проекта"):
             action = "project_home" if session.get("project") else "projects"
-        if action not in {"projects", "project_page", "project", "project_new", "monitor", "monitor_open", "monitor_rotate", "monitor_rotate_confirm"} and session.get("project") and not self.store.can_access(session["project"], user, self.allowed):
+        if action not in {"projects", "project_page", "project", "project_new", "monitor", "monitor_open", "monitor_rotate", "monitor_rotate_confirm", "pmp_personal", "pmp_token"} and session.get("mode") != "pmp_token" and session.get("project") and not self.store.can_access(session["project"], user, self.allowed):
             session = {"last_message": session.get("last_message", -1), "view": "projects"}
             self.store.save_session(user, session)
             raise ValueError("Нет доступа к проекту")
@@ -326,7 +332,7 @@ class Bot:
             task = session["tasks"][int(payload["i"])]
             session["task"], session["mode"] = task, None
             session["view"] = "task"
-            session["pmp_revision"] = (self.store.pmp_connection(project["id"]) or {}).get("revision", 0)
+            session["pmp_stamp"] = self.scheduler.settings_stamp(project)
             self.store.save_session(user, session)
             self.vk.send(user, self.task_display(task), self.task_buttons(session, project))
             return
@@ -354,13 +360,13 @@ class Bot:
             if draft.get("dirty"):
                 raise ValueError("Сначала сохраните изменения в таблицу")
             google = self.google_for(project)
-            revision = (self.store.pmp_connection(project["id"]) or {}).get("revision", 0)
+            stamp = self.scheduler.settings_stamp(project)
             def validate():
                 current = self.store.projects().get(project["id"])
-                config = self.store.pmp_connection(project["id"]) or {}
+                current_stamp = self.scheduler.settings_stamp(project)
                 if not current or not self.store.can_access(project["id"], user, self.allowed):
                     raise ValueError("Нет доступа к проекту")
-                if current.get("revision", 1) != project.get("revision", 1) or config.get("revision", 0) != revision or session.get("pmp_revision") != revision:
+                if current.get("revision", 1) != project.get("revision", 1) or current_stamp != stamp or session.get("pmp_stamp") != stamp:
                     raise ValueError("Настройки проекта или соцсети изменились. Откройте задание заново")
                 saved = self.store.draft(key)
                 if saved.get("dirty") or saved["text"] != draft["text"] or saved["photos"] != draft["photos"]:
@@ -372,12 +378,13 @@ class Bot:
             validate()
             status = google.set_status(project, task, APPROVED, task.get("material_url")) or APPROVED
             draft["postmypost_id"] = remote_id
-            draft["approved_schedule"] = [task["day"], task.get("time", ""), revision]
+            draft["approved_schedule"] = [task["day"], task.get("time", ""), *stamp]
             draft["approved"] = True
             self.store.save_draft(key, draft)
             session["task"]["status"] = status
             self.store.save_session(user, session)
-            self.vk.send(user, f"{status}. Отложенная публикация Postmypost №{remote_id} создана на {task['day']} {task.get('time', '')} (МСК).", self.task_buttons(session, project))
+            remote_label = ", ".join(f"№{i}" for i in (remote_id if isinstance(remote_id, list) else [remote_id]))
+            self.vk.send(user, f"{status}. Очередь Postmypost: {remote_label}. Дата: {task['day']} {task.get('time', '')} (МСК).", self.task_buttons(session, project))
             return
         if action == "publish":
             session["mode"], session["view"] = None, "task"

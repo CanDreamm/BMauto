@@ -132,13 +132,14 @@ def test_connection_is_required_before_approval(tmp_path, project):
     chat.send('publish')
     chat.send('approve')
     assert bot.google.table[2][0] == PLANNED
-    assert any('Подключите Postmypost' in text for text, _ in bot.vk.messages[-3:])
+    assert any('Токен подключается один раз' in text for text, _ in bot.vk.messages[-3:])
 
 
 def test_task_uses_project_specific_token_and_destinations(ready, project):
     bot, chat, api = ready
     bot.store.save_project({'id': 'other', 'name': 'Другой', 'spreadsheet_id': 'other'}, owner=1)
-    bot.store.save_pmp_connection('other', 1, bot.allowed, {'token': 'other-private-token', 'remote_project': 999,
+    bot.store.save_pmp_credential(2, 'other-private-token', bot.allowed, 0)
+    bot.store.save_pmp_connection('other', 2, bot.allowed, {'credential_owner': 2, 'remote_project': 999,
                                    'accounts': [{'id': 9999, 'name': 'Чужая площадка'}]}, 0)
     chat.send('approve')
     assert api.created[0]['project_id'] == 10 and api.created[0]['account_ids'] == [20, 21]

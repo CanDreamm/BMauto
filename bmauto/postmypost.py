@@ -197,17 +197,52 @@ def confirmed_publication(body, ident, payload):
 
 
 class PostmypostScheduler:
-    def __init__(self, store, client_factory=Postmypost):
-        self.store, self.client_factory = store, client_factory
+    def __init__(self, store, client_factory=Postmypost, admins=()):
+        self.store, self.client_factory, self.admins = store, client_factory, admins
+
+    def settings_stamp(self, project):
+        config = self.store.pmp_connection(project['id']) or {}
+        owner = config.get('credential_owner')
+        credential = self.store.pmp_credential(owner) or {}
+        return [config.get('revision', 0), owner, credential.get('revision', 0)]
 
     def signature(self, project, task):
-        connection = self.store.pmp_connection(project['id'])
-        return [task['day'], task.get('time', ''), connection.get('revision') if connection else None]
+        return [task['day'], task.get('time', ''), *self.settings_stamp(project)]
 
     def schedule(self, project, task, key, draft, validate):
         config = self.store.pmp_connection(project['id'])
-        if not config or not config.get('remote_project') or not config.get('accounts'):
-            raise PostmypostError('Подключите Postmypost и выберите соцсети в настройках проекта.')
+        if not config or not config.get('accounts'):
+            raise PostmypostError('Выберите соцсети в настройках проекта. Токен подключается один раз в «Мой Postmypost».')
+        owner = config.get('credential_owner')
+        credential = self.store.pmp_credential(owner)
+        if not credential or not self.store.can_access(project['id'], owner, self.admins):
+            raise PostmypostError('Личное подключение добавившего соцсети пользователя недоступно. Подключите Postmypost заново.')
+        def protected_validate():
+            if (self.settings_stamp(project) != [config['revision'], owner, credential['revision']]
+                    or not self.store.can_access(project['id'], owner, self.admins)):
+                raise PostmypostError('Личное подключение или соцсети изменились. Откройте задание заново.')
+            validate()
+        protected_validate()
+        groups = {}
+        for item in config['accounts']:
+            group = item.get('remote_project', config.get('remote_project'))
+            if type(group) is not int or group <= 0:
+                raise PostmypostError('Выберите соцсети проекта заново.')
+            groups.setdefault(group, []).append(item)
+        previous = self.store.pmp_job(key)
+        for job_key, body in self.store.db.execute("SELECT key,body FROM pmp_jobs WHERE key=? OR key LIKE ?", (key, key + ':pmp:%')):
+            job = json.loads(body)
+            if job.get('remote_project') not in groups and (job.get('id') or job.get('state') == 'sending'):
+                raise PostmypostError('Для удалённой из проекта соцсети уже есть очередь Postmypost. Сначала проверьте прежнюю запись в кабинете.')
+        ids = []
+        for number, (group, accounts) in enumerate(sorted(groups.items())):
+            group_key = key if ((previous and previous.get('remote_project') == group) or (previous is None and number == 0)) else key + ':pmp:' + str(group)
+            settings = {**config, 'remote_project': group, 'accounts': accounts, 'token': credential['token'],
+                        'credential_revision': credential['revision']}
+            ids.append(self._schedule_group(project, task, group_key, draft, protected_validate, settings))
+        return ids[0] if len(ids) == 1 else ids
+
+    def _schedule_group(self, project, task, key, draft, validate, config):
         if draft.get('dirty') or not draft.get('published') or not (draft['text'].strip() or draft['photos']):
             raise PostmypostError('Сначала отправьте актуальный текст и фотографии в таблицу.')
         at = publication_at(task)
@@ -246,7 +281,7 @@ class PostmypostScheduler:
             publication_at(task)  # Uploading may have crossed the requested time.
             job = {'remote_project': config['remote_project'], 'fingerprint': fingerprint,
                    'id': before.get('id') if before else None, 'state': 'sending', 'payload': payload}
-            self.store.claim_pmp_job(key, project['id'], before, job, config['revision'])
+            self.store.claim_pmp_job(key, project['id'], before, job, config['revision'], config['credential_revision'])
             try:
                 result = api.update(job['id'], payload) if job['id'] else api.create(payload)
                 remote_id = result.get('id') if isinstance(result, dict) else None

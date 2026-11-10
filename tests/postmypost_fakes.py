@@ -29,7 +29,7 @@ class FakePostmypost:
         return [{'id': 1, 'code': 'vk'}, {'id': 2, 'code': 'telegram'}]
 
     def accounts(self, project):
-        assert project == 10
+        assert project in {p['id'] for p in self.projects_data}
         return [{'id': 20, 'chanel_id': 1, 'name': 'Сообщество ВК', 'connection_status': 1 if self.connected else 0},
                 {'id': 21, 'chanel_id': 2, 'name': 'Канал Telegram', 'connection_status': 1}]
 
@@ -73,8 +73,9 @@ def connect_postmypost(bot, project, api=None):
     from test_projects import Conversation
     api = api or FakePostmypost()
     bot.scheduler.client_factory = api.factory
+    bot.store.save_pmp_credential(1, 'test-token', bot.allowed, 0)
     bot.store.save_pmp_connection(project['id'], 1, bot.allowed, {
-        'token': 'test-token', 'remote_project': 10, 'remote_name': 'Бренд',
+        'credential_owner': 1, 'remote_project': 10, 'remote_name': 'Бренд',
         'accounts': [{'id': 20, 'name': 'ВК'}, {'id': 21, 'name': 'Telegram'}]}, 0)
     if 'Время' not in bot.google.table[1]:
         bot.google.table[1].insert(2, 'Время')

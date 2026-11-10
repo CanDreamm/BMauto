@@ -31,7 +31,7 @@ def test_invite_without_env_edit_and_filter_projects(tmp_path, project):
     chat = Conversation(bot, 3)
     chat.send(text="Начать")
     buttons = bot.vk.messages[-1][1]
-    assert buttons == [("Test", {"a": "project", "p": "test"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
+    assert buttons == [("Test", {"a": "project", "p": "test"}), ("Мой Postmypost", {"a": "pmp_personal", "_color": "primary"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
     assert "Скрытый проект" not in bot.vk.messages[-1][0]
     chat.send("project", p="test")
     assert actions(bot) == {"task", "settings", "projects"}
@@ -123,7 +123,7 @@ def test_revocation_preserves_other_project_access(tmp_path, project):
     participant.send("project", p="test")
     bot.store.remove_member("test", 1, 3, bot.allowed)
     participant.send("projects")
-    assert bot.vk.messages[-1][1] == [("Второй", {"a": "project", "p": "second"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
+    assert bot.vk.messages[-1][1] == [("Второй", {"a": "project", "p": "second"}), ("Мой Postmypost", {"a": "pmp_personal", "_color": "primary"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
     participant.send("project", p="test")
     assert "project" not in bot.store.session(3)
 
@@ -193,7 +193,7 @@ def test_every_action_rechecks_access_even_if_old_session_survives(tmp_path, pro
     member.send(action)
     assert "project" not in bot.store.session(3)
     assert not bot.google.files
-    assert actions(bot) == {"project", "monitor"}
+    assert actions(bot) == {"project", "monitor", "pmp_personal"}
     assert all("Задание: Текст" not in text for text, _ in bot.vk.messages[old_count:])
 
 

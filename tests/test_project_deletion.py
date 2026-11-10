@@ -64,7 +64,7 @@ def test_delete_requires_red_confirmation_and_does_not_touch_google(tmp_path, pr
     assert "project" not in bot.store.session(1)
     assert bot.google.files == {} and bot.google.created == [] and bot.google.shared == []
     assert bot.google.table[2][3] == "Текст"
-    assert actions(bot) == {"project_new", "monitor"}
+    assert actions(bot) == {"project_new", "monitor", "pmp_personal"}
     assert any("Файлы на Google Диске и данные таблицы сохранены" in text for text, _ in bot.vk.messages)
     # A legacy config cannot re-import the deleted project, even after restart.
     restarted = bot_at(tmp_path, {"projects": [project]})

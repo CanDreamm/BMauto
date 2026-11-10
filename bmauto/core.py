@@ -140,6 +140,7 @@ class Store:
         (self.root / "state.sqlite3").chmod(0o600)
         self.db.execute("CREATE TABLE IF NOT EXISTS sessions (user INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS drafts (key TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS pmp_credentials (user_id INTEGER PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS pmp_connections (project_id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS pmp_jobs (key TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS monitor_project_links (project_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE)")
@@ -153,6 +154,7 @@ class Store:
         if "ready" not in {row[1] for row in self.db.execute("PRAGMA table_info(drive_locations)")}:
             self.db.execute("ALTER TABLE drive_locations ADD COLUMN ready INTEGER NOT NULL DEFAULT 0")
         self.db.commit()
+        self.migrate_pmp_credentials()
 
     @staticmethod
     def is_demo(project):
@@ -183,19 +185,76 @@ class Store:
         return {key: project for key, body in self.db.execute("SELECT id, body FROM projects ORDER BY rowid")
                 if not (project := json.loads(body)).get("deleted_at")}
 
+    def pmp_credential(self, user):
+        row = self.db.execute("SELECT body FROM pmp_credentials WHERE user_id=?", (user,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_pmp_credential(self, user, token, admins, expected_revision):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            if not isinstance(user, int) or user <= 0 or not self.can_enter(user, admins):
+                raise ValueError("Нет доступа к боту")
+            current = self.pmp_credential(user) or {"revision": 0}
+            if current["revision"] != expected_revision:
+                raise ValueError("Личный токен изменился. Откройте подключение заново")
+            updated = {"token": token, "revision": current["revision"] + 1}
+            self.db.execute("INSERT OR REPLACE INTO pmp_credentials VALUES (?,?)", (user, json.dumps(updated)))
+        return updated
+
+    def migrate_pmp_credentials(self):
+        rows = [(ident, json.loads(body)) for ident, body in self.db.execute("SELECT project_id,body FROM pmp_connections")]
+        if not any("token" in body for _, body in rows):
+            return
+        backup = self.root / (".pmp-migration-" + secrets.token_hex(8) + ".sqlite3")
+        backup.touch(mode=0o600, exist_ok=False)
+        target = sqlite3.connect(backup)
+        try:
+            self.db.backup(target)
+        finally:
+            target.close()
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            owners = dict(self.db.execute("SELECT project_id,user_id FROM project_members WHERE role='owner'"))
+            rows = [(ident, json.loads(body)) for ident, body in self.db.execute("SELECT project_id,body FROM pmp_connections")]
+            tokens = {}
+            for ident, config in rows:
+                owner = config.get("credential_owner", owners.get(ident))
+                # Never turn an unowned project secret into somebody's personal key.
+                if "token" in config and config.get("credential_owner") is not None:
+                    tokens.setdefault(owner, set()).add(config["token"])
+            for owner, values in tokens.items():
+                # Conflicting old project tokens require one explicit personal connection.
+                if len(values) == 1 and not self.pmp_credential(owner):
+                    self.db.execute("INSERT OR IGNORE INTO pmp_credentials VALUES (?,?)", (owner, json.dumps({"token": next(iter(values)), "revision": 1})))
+            for ident, config in rows:
+                owner = config.get("credential_owner", owners.get(ident))
+                if "token" not in config or owner is None:
+                    continue
+                config.pop("token")
+                config["credential_owner"] = owner
+                config["accounts"] = [{**item, "remote_project": item.get("remote_project", config.get("remote_project"))} for item in config.get("accounts", [])]
+                self.db.execute("UPDATE pmp_connections SET body=? WHERE project_id=?", (json.dumps(config), ident))
+
     def pmp_connection(self, project_id):
         row = self.db.execute("SELECT body FROM pmp_connections WHERE project_id=?", (project_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def save_pmp_connection(self, project_id, actor, admins, changes, expected_revision):
+    def save_pmp_connection(self, project_id, actor, admins, changes, expected_revision, credential_revision=None):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             if not self.can_manage(project_id, actor, admins):
                 raise ValueError("Подключение Postmypost меняет владелец или администратор")
+            if "token" in changes:
+                raise ValueError("Токен сохраняется только в личном подключении Postmypost")
             current = self.pmp_connection(project_id) or {"revision": 0}
             if current["revision"] != expected_revision:
                 raise ValueError("Подключение Postmypost изменилось. Откройте настройки заново")
             updated = {**current, **changes, "revision": current["revision"] + 1}
+            personal = self.pmp_credential(actor)
+            if updated.get("accounts") and (updated.get("credential_owner") != actor or not personal):
+                raise ValueError("Для подключения соцсетей используется ваш личный токен")
+            if credential_revision is not None and (not personal or personal["revision"] != credential_revision):
+                raise ValueError("Личный токен изменился. Выберите соцсети заново")
             self.db.execute("INSERT OR REPLACE INTO pmp_connections VALUES (?,?)", (project_id, json.dumps(updated)))
         return updated
 
@@ -203,12 +262,15 @@ class Store:
         row = self.db.execute("SELECT body FROM pmp_jobs WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def claim_pmp_job(self, key, project_id, before, job, revision):
+    def claim_pmp_job(self, key, project_id, before, job, revision, credential_revision=None):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             config = self.pmp_connection(project_id)
             if project_id not in self.projects() or not config or config["revision"] != revision:
                 raise ValueError("Настройки Postmypost изменились. Откройте задание заново")
+            credential = self.pmp_credential(config.get("credential_owner"))
+            if credential_revision is not None and (not credential or credential["revision"] != credential_revision):
+                raise ValueError("Личный токен изменился. Откройте задание заново")
             if self.pmp_job(key) != before:
                 raise ValueError("Публикация уже обрабатывается. Откройте задание и проверьте результат")
             self.db.execute("INSERT OR REPLACE INTO pmp_jobs VALUES (?,?,?)", (key, project_id, json.dumps(job)))
@@ -289,6 +351,7 @@ class Store:
                 row = self.db.execute("SELECT 1 FROM project_members WHERE project_id=? AND role='owner'", (key,)).fetchone()
                 if not row:
                     self.db.execute("INSERT INTO project_members VALUES (?,?,'owner') ON CONFLICT(project_id,user_id) DO UPDATE SET role='owner'", (key, default_owner))
+        self.migrate_pmp_credentials()
 
     def members(self, project_id):
         return dict(self.db.execute("SELECT user_id,role FROM project_members WHERE project_id=? ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END,user_id", (project_id,)))

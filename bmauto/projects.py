@@ -65,15 +65,16 @@ class ProjectMenus:
     def show_projects(self, user, page=0):
         self.view(user, "projects")
         projects = list(self.store.visible_projects(user, self.admins).values())
-        page = min(max(0, page), max(0, (len(projects) - 1) // 7))
-        buttons = [(p["name"], {"a": "project", "p": p["id"]}) for p in projects[page * 7:(page + 1) * 7]]
+        page = min(max(0, page), max(0, (len(projects) - 1) // 6))
+        buttons = [(p["name"], {"a": "project", "p": p["id"]}) for p in projects[page * 6:(page + 1) * 6]]
         pagination = []
         if page:
             pagination.append(("Назад", {"a": "project_page", "page": page - 1}))
-        if (page + 1) * 7 < len(projects):
+        if (page + 1) * 6 < len(projects):
             pagination.append(("Далее", {"a": "project_page", "page": page + 1}))
         if pagination:
             buttons.append(pagination)
+        buttons.append(("Мой Postmypost", {"a": "pmp_personal", "_color": "primary"}))
         buttons.append(("Мой мониторинг", {"a": "monitor", "_color": "primary"}))
         if user in self.admins:
             buttons.append(("Создать проект", {"a": "project_new"}))
