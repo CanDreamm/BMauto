@@ -7,7 +7,7 @@ class MemberMenus:
 
     def show(self, user, project, page=0):
         if not self.store.can_manage(project["id"], user, self.admins):
-            raise ValueError("Управлять участниками может только владелец проекта или администратор")
+            raise ValueError("Нет доступа к участникам этого проекта")
         members = list(self.store.members(project["id"]).items())
         page = min(max(0, page), max(0, (len(members) - 1) // 6))
         lines = [f"Участники проекта «{project['name']}»"]
@@ -16,7 +16,7 @@ class MemberMenus:
             lines.append(f"https://vk.com/id{member} — {'владелец' if role == 'owner' else 'участник'}")
             if role != "owner" and member not in self.admins:
                 buttons.append((f"Удалить id{member}", {"a": "member_remove", "user": member}))
-        lines.append("Администраторы бота сохраняют доступ ко всем проектам. Участники могут подключать Google проекта и работать с заданиями и общими черновиками; остальные настройки меняет владелец.")
+        lines.append("Администраторы бота сохраняют доступ ко всем проектам. Участники могут подключать Google проекта и работать с заданиями и общими черновиками; все настройки проекта доступны его участникам.")
         if page:
             buttons.append(("Назад", {"a": "members", "page": page - 1}))
         if (page + 1) * 6 < len(members):
@@ -40,7 +40,7 @@ class MemberMenus:
             return False
         project = self.store.projects().get(session.get("project"))
         if not project or not self.store.can_manage(project["id"], user, self.admins):
-            raise ValueError("Управлять участниками может только владелец проекта или администратор")
+            raise ValueError("Нет доступа к участникам этого проекта")
         if action == "members":
             self.show(user, project, int(payload.get("page", 0)))
         elif action == "member_add":

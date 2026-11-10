@@ -424,7 +424,7 @@ def test_assignment_links_preserve_text_and_escape_markup(monitor):
     assert not parser.images
 
 
-def test_project_link_is_persistent_separate_and_manageable_only_by_owner_or_admin(monitor, tmp_path):
+def test_project_link_is_persistent_separate_and_manageable_by_members(monitor, tmp_path):
     store, personal, service, _ = monitor
     store.add_member('test', 1, 3, {1})
     revision = store.projects()['test']['revision']
@@ -434,7 +434,8 @@ def test_project_link_is_persistent_separate_and_manageable_only_by_owner_or_adm
     assert store.project_monitor_token('test', 99, {99}) == token
     assert store.projects()['test']['revision'] == revision
     assert store.monitor_user(token) is None
-    for actor in (3, 4):
+    assert store.project_monitor_token('test', 3) == token
+    for actor in (4,):
         with pytest.raises(ValueError):
             store.project_monitor_token('test', actor)
         with pytest.raises(ValueError):
@@ -526,13 +527,18 @@ def test_bot_project_monitor_link_navigation_and_confirmed_rotation(tmp_path, pr
     assert bot.store.session(1)['view'] == 'settings'
 
 
-def test_member_cannot_create_or_rotate_shared_project_link(tmp_path, project):
+def test_member_can_create_and_rotate_shared_project_link(tmp_path, project):
     bot = bot_at(tmp_path, {'projects': [project]})
     bot.store.add_member(project['id'], 1, 3, bot.allowed)
     chat = Conversation(bot, 3)
     chat.send('project', p=project['id'])
     chat.send('settings')
-    assert 'project_monitor' not in actions(bot)
-    for action in ('project_monitor', 'project_monitor_open', 'project_monitor_rotate', 'project_monitor_rotate_confirm'):
-        chat.send(action, token='forged')
-    assert not bot.store.db.execute('SELECT * FROM monitor_project_links').fetchall()
+    assert 'project_monitor' in actions(bot)
+    chat.send('project_monitor')
+    old = bot.store.project_monitor_token(project['id'], 3, bot.allowed)
+    chat.send('project_monitor_rotate')
+    nonce = bot.store.session(3)['project_monitor_confirmation']['token']
+    chat.send('project_monitor_rotate_confirm', token='forged')
+    assert bot.store.monitor_project(old) is not None
+    chat.send('project_monitor_rotate_confirm', token=nonce)
+    assert bot.store.monitor_project(old) is None

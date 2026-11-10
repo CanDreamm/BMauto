@@ -20,7 +20,7 @@ class PostmypostMenus:
     def require(self, user, session):
         ident = session.get('project')
         if not self.store.can_manage(ident, user, self.admins):
-            raise ValueError('Соцсети проекта настраивает владелец или администратор')
+            raise ValueError('Нет доступа к соцсетям этого проекта')
         return self.store.projects()[ident]
 
     def show_personal(self, user):

@@ -51,7 +51,17 @@ class ProjectMenus:
 
     def managed(self, user, project_id):
         if not self.store.can_manage(project_id, user, self.admins):
-            raise ValueError("Настройки меняет владелец проекта или администратор")
+            raise ValueError("Нет доступа к настройкам этого проекта")
+        return self.store.projects()[project_id]
+
+    def can_edit(self, user, project_id, field):
+        if field not in FIELD_MAP or field == "name":
+            return False
+        return self.store.can_access(project_id, user, self.admins)
+
+    def editable(self, user, project_id, field):
+        if not self.can_edit(user, project_id, field):
+            raise ValueError("Нет доступа к настройкам этого проекта")
         return self.store.projects()[project_id]
 
     def view(self, user, name):
@@ -84,24 +94,15 @@ class ProjectMenus:
         if not self.store.can_access(project["id"], user, self.admins):
             raise ValueError("Нет доступа к проекту")
         self.view(user, "settings")
-        details = [f"Настройки проекта «{project['name']}»"]
-        for key, label, _, default in FIELDS:
-            value = project.get(key, default)
-            details.append(f"{label}: {value if value is not None else 'Не задано'}")
         connected = self.connections is not None and self.connections.connected(project)
         buttons = [("Сменить Google-аккаунт" if connected else "Подключить Google", {"a": "google_connect"})]
-        if self.store.can_manage(project["id"], user, self.admins):
-            buttons.extend((label, {"a": "project_edit", "field": key})
-                           for key, label, _, _ in sorted(FIELDS, key=lambda field: field[0] != "spreadsheet_id"))
-            buttons.append(("Участники", {"a": "members"}))
-            buttons.append(("Соцсети · Postmypost", {"a": "pmp", "_color": "primary"}))
-            buttons.append(("Мониторинг проекта", {"a": "project_monitor", "_color": "primary"}))
-            buttons.append(back_footer({"a": "project_home"}, ("Удалить проект", {"a": "project_delete", "_color": "negative"})))
-        else:
-            details.append("Вы можете подключить свой Google для этого проекта. Остальные настройки меняет владелец проекта")
-            buttons.append(back_footer({"a": "project_home"}))
-        message = (f"Настройки проекта «{project['name']}»\nВыберите параметр"
-                   if self.store.can_manage(project["id"], user, self.admins) else "\n\n".join(details))
+        buttons.extend((label, {"a": "project_edit", "field": key})
+                       for key, label, _, _ in sorted(FIELDS, key=lambda field: field[0] != "spreadsheet_id"))
+        buttons.append(("Участники", {"a": "members"}))
+        buttons.append(("Соцсети · Postmypost", {"a": "pmp", "_color": "primary"}))
+        buttons.append(("Мониторинг проекта", {"a": "project_monitor", "_color": "primary"}))
+        buttons.append(back_footer({"a": "project_home"}, ("Удалить проект", {"a": "project_delete", "_color": "negative"})))
+        message = f"Настройки проекта «{project['name']}»\nВыберите параметр"
         self.vk.send(user, message, buttons)
 
     def show_monitor(self, user):
@@ -136,7 +137,7 @@ class ProjectMenus:
             if user not in self.admins:
                 raise ValueError("Создавать проекты может только администратор")
         else:
-            self.managed(user, wizard["project"])
+            self.editable(user, wizard["project"], wizard["field"])
         self.view(user, "create" if wizard["kind"] == "create" else "edit")
         key, label, prompt, default = FIELD_MAP["name"] if wizard["kind"] == "create" else FIELD_MAP[wizard["field"]]
         if wizard["kind"] != "create":
@@ -274,7 +275,7 @@ class ProjectMenus:
         elif action == "project_edit":
             if payload.get("field") not in FIELD_MAP or payload.get("field") == "name":
                 raise ValueError("Неизвестная настройка")
-            project = self.managed(user, session.get("project"))
+            project = self.editable(user, session.get("project"), payload["field"])
             session["wizard"] = {"kind": "edit", "field": payload["field"], "project": project["id"],
                                  "revision": project.get("revision", 1), "page": 0}
         elif "wizard" in session and (action is None or action in {"project_value", "project_default"}):
@@ -296,7 +297,7 @@ class ProjectMenus:
                 values.update(DEFAULT_COLUMNS, id=uuid.uuid4().hex, name=value)
                 project = self.store.save_project(values, owner=user)
             else:
-                project = self.managed(user, wizard["project"])
+                project = self.editable(user, wizard["project"], key)
                 updated = {**project, key: value}
                 if key == "spreadsheet_id" and project.get(key) != value:
                     # A changed destination must not reuse a draft/folder from the old one.

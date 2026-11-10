@@ -50,10 +50,8 @@ def test_new_project_creator_is_owner_and_members_persist(tmp_path):
     assert restarted.store.members(project["id"])[1] == "owner"
 
 
-@pytest.mark.parametrize("action,payload", [("project_edit", {"field": "concept"}),
-                                           ("members", {}), ("member_add", {}),
-                                           ("member_remove", {"user": 1}), ("project_new", {})])
-def test_members_cannot_change_settings_or_access(tmp_path, project, action, payload):
+@pytest.mark.parametrize("action,payload", [("member_remove", {"user": 1}), ("project_new", {})])
+def test_member_cannot_remove_owner_or_create_project_without_global_permission(tmp_path, project, action, payload):
     bot = make_bot(tmp_path, [project])
     add_through_menu(bot)
     chat = Conversation(bot, 3)
@@ -218,18 +216,19 @@ def test_member_cannot_resume_old_admin_wizard(tmp_path, project):
     assert actions(bot) == {"task", "settings", "projects"}
 
 
-def test_member_can_read_settings_but_cannot_edit(tmp_path, project):
+@pytest.mark.parametrize("field,value", [("concept", "Новая концепция"), ("prompt", "Новый промпт"),
+                                        ("spreadsheet_id", "https://docs.google.com/spreadsheets/d/new-book/edit")])
+def test_member_can_edit_project_settings(tmp_path, project, field, value):
     bot = make_bot(tmp_path, [project])
     add_through_menu(bot)
     member = Conversation(bot, 3)
     member.send("project", p="test")
     member.send("settings")
-    assert actions(bot) == {"google_connect", "project_home"}
-    assert "Concept" in bot.vk.messages[-1][0]
-    member.send("project_edit", field="concept")
-    member.send(text="Подмена концепции")
-    assert bot.store.projects()["test"]["concept"] == "Concept"
-    assert actions(bot) == {"google_connect", "project_home"}
+    assert actions(bot) == {"google_connect", "project_home", "project_edit", "members", "pmp", "project_monitor", "project_delete"}
+    member.send("project_edit", field=field)
+    member.send(text=value)
+    assert bot.store.projects()["test"][field] == ("new-book" if field == "spreadsheet_id" else value)
+    assert bot.store.session(3)["view"] == "settings"
 
 
 @pytest.mark.parametrize("value,expected", [("123", 123), ("id123", 123),

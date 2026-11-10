@@ -140,7 +140,7 @@ class Bot:
             self.vk.send(user, notice)
         if session.get("view") in {"pmp_personal", "pmp_token"}:
             if not self.store.can_enter(user, self.allowed):
-                self.vk.send(user, "У вас нет доступных проектов. Обратитесь к владельцу", [])
+                self.vk.send(user, "У вас нет доступных проектов. Попросите добавить вас в проект", [])
                 return
             self.postmypost_menus.render(user, session)
             return
@@ -156,7 +156,7 @@ class Bot:
             self.store.save_session(user, session)
             project = None
         wizard = session.get("wizard")
-        if wizard and ((wizard["kind"] == "create" and user not in self.allowed) or (wizard["kind"] != "create" and not self.store.can_manage(wizard["project"], user, self.allowed))):
+        if wizard and ((wizard["kind"] == "create" and user not in self.allowed) or (wizard["kind"] != "create" and not self.project_menus.can_edit(user, wizard["project"], wizard.get("field")))):
             session.pop("wizard", None)
             session["view"] = "home" if project else "projects"
             self.store.save_session(user, session)
@@ -177,7 +177,7 @@ class Bot:
             else:
                 self.project_menus.show_home(user, project)
             return
-        if project and not self.store.can_manage(project["id"], user, self.allowed) and ("wizard" in session or session.get("view") in {"edit", "create"}):
+        if project and not self.store.can_manage(project["id"], user, self.allowed) and ("wizard" in session or session.get("view") in {"edit", "create"}) and not self.project_menus.can_edit(user, project["id"], (session.get("wizard") or {}).get("field")):
             session.pop("wizard", None)
             self.store.save_session(user, session)
             self.project_menus.show_home(user, project)
@@ -218,7 +218,7 @@ class Bot:
             if self.store.session(user):
                 if hasattr(self.vk, "begin_response"):
                     self.vk.begin_response(user)
-                self.vk.send(user, "У вас нет доступных проектов. Обратитесь к владельцу", [])
+                self.vk.send(user, "У вас нет доступных проектов. Попросите добавить вас в проект", [])
                 if hasattr(self.vk, "end_response"):
                     self.vk.end_response(user)
             return

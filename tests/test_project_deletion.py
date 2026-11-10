@@ -132,20 +132,19 @@ def test_delete_revokes_all_sessions_but_keeps_other_project_and_drafts(tmp_path
     assert "project" not in store.session(3)
 
 
-def test_members_cannot_delete_even_with_forged_confirmation(tmp_path, project):
+def test_member_can_delete_project_only_with_valid_confirmation(tmp_path, project):
     bot = Bot({"projects": [project]}, Store(tmp_path), FakeVK(), FakeGoogle(), FakeLLM(), {1})
     bot.store.add_member("test", 1, 3, {1})
     member = Conversation(bot, 3)
     member.send("project", p="test")
     member.send("settings")
-    assert actions(bot) == {"google_connect", "project_home"}
+    assert 'project_delete' in actions(bot)
     member.send("project_delete")
-    assert "delete_confirmation" not in bot.store.session(3)
-    session = bot.store.session(3)
-    session.update(view="project_delete", delete_confirmation={"project": "test", "revision": 1, "token": "fake"})
-    bot.store.save_session(3, session)
-    member.send("project_delete_confirm", p="test", token="fake")
+    token = bot.store.session(3)['delete_confirmation']['token']
+    member.send("project_delete_confirm", p="test", token="forged")
     assert "test" in bot.store.projects()
+    member.send("project_delete_confirm", p="test", token=token)
+    assert "test" not in bot.store.projects()
 
 
 def test_pending_google_authorization_cannot_restore_deleted_project(tmp_path, project):

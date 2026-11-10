@@ -74,7 +74,7 @@ def test_stale_selection_cannot_override_a_replaced_personal_token(tmp_path, pro
     assert bot.store.pmp_connection(project['id']) is None
 
 
-def test_non_manager_has_own_personal_token_but_cannot_change_project_accounts(tmp_path, project):
+def test_member_can_change_project_accounts_using_own_personal_token(tmp_path, project):
     bot, api, owner = setup(tmp_path, project)
     connect_personal(owner)
     owner.send('project', p=project['id'])
@@ -89,10 +89,14 @@ def test_non_manager_has_own_personal_token_but_cannot_change_project_accounts(t
     assert bot.store.pmp_credential(3)['revision'] == 1
     member.send('project', p=project['id'])
     member.send('settings')
-    assert 'pmp' not in actions(bot)
-    for action in ('pmp', 'pmp_accounts', 'pmp_toggle', 'pmp_save'):
-        member.send(action, i=0, n='forged')
-    assert bot.store.pmp_connection(project['id']) == before
+    assert 'pmp' in actions(bot)
+    member.send('pmp')
+    member.send('pmp_accounts')
+    choose(bot, member, 'pmp_toggle', 1)
+    choose(bot, member, 'pmp_save')
+    updated = bot.store.pmp_connection(project['id'])
+    assert updated['credential_owner'] == 3 and updated['accounts'][0]['id'] == 21
+    assert bot.store.pmp_credential(1)['revision'] == 1
     assert all('test-token' not in text for text, _ in bot.vk.messages)
 
 

@@ -273,7 +273,7 @@ class Store:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             if not self.can_manage(project_id, actor, admins):
-                raise ValueError("Подключение Postmypost меняет владелец или администратор")
+                raise ValueError("Нет доступа к соцсетям этого проекта")
             if "token" in changes:
                 raise ValueError("Токен сохраняется только в личном подключении Postmypost")
             current = self.pmp_connection(project_id) or {"revision": 0}
@@ -326,7 +326,7 @@ class Store:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             if not self.can_manage(project_id, actor, admins):
-                raise ValueError("Ссылкой проекта управляет владелец или администратор")
+                raise ValueError("Нет доступа к мониторингу этого проекта")
             if rotate:
                 self.db.execute("DELETE FROM monitor_project_links WHERE project_id=?", (project_id,))
             self.db.execute("DELETE FROM pmp_connections WHERE project_id=?", (project_id,))
@@ -355,7 +355,7 @@ class Store:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             if not self.can_manage(project_id, actor, admins):
-                raise ValueError("Удалить проект может только владелец или администратор")
+                raise ValueError("Нет доступа к удалению этого проекта")
             project = self.projects()[project_id]
             if project.get("revision", 1) != expected_revision:
                 raise ValueError("Проект изменился. Подтвердите удаление заново")
@@ -390,7 +390,7 @@ class Store:
         return project_id in self.projects() and (user in admins or user in self.members(project_id))
 
     def can_manage(self, project_id, user, admins):
-        return project_id in self.projects() and (user in admins or self.members(project_id).get(user) == 'owner')
+        return self.can_access(project_id, user, admins)
 
     def visible_projects(self, user, admins):
         projects = self.projects()
@@ -404,7 +404,7 @@ class Store:
 
     def add_member(self, project_id, actor, user, admins):
         if not self.can_manage(project_id, actor, admins):
-            raise ValueError("Управлять участниками может только владелец проекта или администратор")
+            raise ValueError("Нет доступа к участникам этого проекта")
         if type(user) is not int or not 0 < user < 2**63:
             raise ValueError("Неверный числовой ID пользователя ВК")
         if user in admins or user in self.members(project_id):
@@ -414,7 +414,7 @@ class Store:
 
     def remove_member(self, project_id, actor, user, admins):
         if not self.can_manage(project_id, actor, admins):
-            raise ValueError("Управлять участниками может только владелец проекта или администратор")
+            raise ValueError("Нет доступа к участникам этого проекта")
         if self.members(project_id).get(user) == 'owner' or user in admins:
             raise ValueError("Нельзя удалить владельца или администратора")
         with self.db:

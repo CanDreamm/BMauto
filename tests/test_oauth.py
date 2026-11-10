@@ -14,7 +14,7 @@ from bmauto.oauth import GoogleConnections, ProjectGoogle
 from bmauto.oauth_server import make_handler
 from bmauto.google import SCOPES
 from bmauto.vk import keyboard
-from test_projects import Conversation
+from test_projects import Conversation, actions
 from test_workflow import FakeGoogle, FakeLLM, FakeVK
 
 
@@ -258,7 +258,7 @@ def test_assigned_member_connects_own_google_from_vk_settings(connection, monkey
     assert vk.messages[-1][1] == [("Test", {"a": "project", "p": "test"}), ("Мой Postmypost", {"a": "pmp_personal", "_color": "primary"}), ("Мой мониторинг", {"a": "monitor", "_color": "primary"})]
     member.send("project", p="test")
     member.send("settings")
-    assert vk.messages[-1][1] == [("Подключить Google", {"a": "google_connect"}), [("Назад", {"a": "project_home"})]]
+    assert {"google_connect", "project_edit", "members", "pmp", "project_monitor", "project_delete", "project_home"} == actions(bot)
     member.send("google_connect")
     member.send("google_open")
     url = vk.opened_url
